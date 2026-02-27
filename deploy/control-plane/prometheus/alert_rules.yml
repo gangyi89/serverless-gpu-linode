@@ -1,0 +1,20 @@
+groups:
+  - name: control-plane
+    rules:
+      - alert: OrchestratorDown
+        expr: up{job="orchestrator"} == 0
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Orchestrator is down"
+          description: "Prometheus cannot scrape orchestrator for over 1 minute."
+
+      - alert: QueueDepthHigh
+        expr: orchestrator_queue_depth > 20
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Queue depth is high"
+          description: "Queue depth stayed above 20 for over 2 minutes."

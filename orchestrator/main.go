@@ -22,12 +22,17 @@ func main() {
 		"nats_url", cfg.NatsURL,
 		"stream", cfg.StreamName,
 		"consumer", cfg.ConsumerName,
+		"dlq_stream", cfg.DLQStream,
+		"dlq_subject", cfg.DLQSubject,
 		"linode_managed_tag", cfg.LinodeManagedTag,
 		"linode_cluster_tag", cfg.LinodeClusterTag,
+		"min_nodes", cfg.MinNodes,
 		"max_nodes", cfg.MaxNodes,
 		"scale_up_threshold", cfg.ScaleUpThreshold,
 		"scale_up_duration", cfg.ScaleUpDuration,
 		"cooldown_duration", cfg.CooldownDuration,
+		"scale_down_idle_duration", cfg.ScaleDownIdleDuration,
+		"scale_to_zero_idle_duration", cfg.ScaleToZeroIdleDuration,
 		"listen_addr", cfg.ListenAddr,
 	)
 
@@ -48,23 +53,43 @@ func main() {
 
 // loadConfig reads orchestrator configuration from environment variables with sensible defaults.
 func loadConfig() Config {
-	return Config{
+	cfg := Config{
 		NatsURL:      envOrDefault("NATS_URL", "nats://localhost:4222"),
 		StreamName:   envOrDefault("NATS_STREAM", "GPU_JOBS"),
 		ConsumerName: envOrDefault("NATS_CONSUMER", "gpu-workers"),
+		DLQSubject:   envOrDefault("NATS_DLQ_SUBJECT", "GPU_JOBS.DLQ"),
+		DLQStream:    envOrDefault("NATS_DLQ_STREAM", "GPU_JOBS_DLQ"),
 		LinodeManagedTag: envOrDefault("LINODE_MANAGED_TAG", "serverless-gpu-managed"),
 		LinodeClusterTag: envOrDefault("LINODE_CLUSTER_TAG", "serverless-gpu-default"),
 
+		MinNodes:         envOrDefaultInt("MIN_NODES", 0),
 		MaxNodes:         envOrDefaultInt("MAX_NODES", 2),
 		ScaleUpThreshold: envOrDefaultInt("SCALE_UP_THRESHOLD", 10),
 		ScaleUpDuration:  envOrDefaultDuration("SCALE_UP_DURATION", 5*time.Minute),
 		CooldownDuration: envOrDefaultDuration("COOLDOWN_DURATION", 5*time.Minute),
+		ScaleDownIdleDuration:   envOrDefaultDuration("SCALE_DOWN_IDLE_DURATION", 5*time.Minute),
+		ScaleToZeroIdleDuration: envOrDefaultDuration("SCALE_TO_ZERO_IDLE_DURATION", 10*time.Minute),
 
 		PrometheusTargetsFile: envOrDefault("PROMETHEUS_TARGETS_FILE", "/etc/prometheus/gpu_targets.json"),
 		ListenAddr:            envOrDefault("LISTEN_ADDR", ":8081"),
 
 		MonitorInterval: envOrDefaultDuration("MONITOR_INTERVAL", 10*time.Second),
 	}
+
+	if cfg.MinNodes < 0 {
+		slog.Error("invalid min nodes", "min_nodes", cfg.MinNodes)
+		os.Exit(1)
+	}
+	if cfg.MaxNodes < 1 {
+		slog.Error("invalid max nodes", "max_nodes", cfg.MaxNodes)
+		os.Exit(1)
+	}
+	if cfg.MinNodes > cfg.MaxNodes {
+		slog.Error("invalid node floor/cap configuration", "min_nodes", cfg.MinNodes, "max_nodes", cfg.MaxNodes)
+		os.Exit(1)
+	}
+
+	return cfg
 }
 
 func loadLinodeClient() *LinodeClient {

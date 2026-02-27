@@ -9,6 +9,8 @@ import (
 type Metrics struct {
 	Registry            *prometheus.Registry
 	QueueDepth          prometheus.Gauge
+	QueuePending        prometheus.Gauge
+	QueueAckPending     prometheus.Gauge
 	NodeCount           prometheus.Gauge
 	NodeCountByState    *prometheus.GaugeVec
 	ProvisioningLatency prometheus.Histogram
@@ -26,7 +28,15 @@ func NewMetrics() *Metrics {
 		Registry: reg,
 		QueueDepth: factory.NewGauge(prometheus.GaugeOpts{
 			Name: "orchestrator_queue_depth",
-			Help: "Current number of pending messages in the GPU jobs stream",
+			Help: "Current total unprocessed jobs (queued + inflight)",
+		}),
+		QueuePending: factory.NewGauge(prometheus.GaugeOpts{
+			Name: "orchestrator_queue_pending",
+			Help: "Current queued jobs (not-yet-delivered)",
+		}),
+		QueueAckPending: factory.NewGauge(prometheus.GaugeOpts{
+			Name: "orchestrator_queue_ack_pending",
+			Help: "Current inflight jobs (delivered but unacknowledged)",
 		}),
 		NodeCount: factory.NewGauge(prometheus.GaugeOpts{
 			Name: "orchestrator_node_count",

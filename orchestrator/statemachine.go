@@ -82,6 +82,16 @@ func (nm *NodeManager) TransitionNode(linodeID int, to NodeState) error {
 		return fmt.Errorf("node %d not found", linodeID)
 	}
 
+	// Idempotent transition: repeated attempts to set the same state are no-ops.
+	// This avoids noisy "ready -> ready" errors when multiple reconciliation paths
+	// observe the same cloud state around the same time.
+	if node.State == to {
+		if to == StateReady && node.ReadyAt.IsZero() {
+			node.ReadyAt = time.Now()
+		}
+		return nil
+	}
+
 	allowed := validTransitions[node.State]
 	for _, s := range allowed {
 		if s == to {

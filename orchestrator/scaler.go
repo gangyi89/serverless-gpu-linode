@@ -61,8 +61,8 @@ func (o *Orchestrator) EvaluateScaleUp(ctx context.Context, pending int) {
 		return
 	}
 
-	// --- Scale 1→2: Queue depth exceeds threshold for sustained period ---
-	if pending > o.cfg.ScaleUpThreshold && readyCount == 1 && activeCount == 1 {
+	// --- Scale N→N+1 (where N>=1): Queue depth exceeds threshold for sustained period ---
+	if pending > o.cfg.ScaleUpThreshold && readyCount == activeCount && activeCount > 0 && activeCount < o.cfg.MaxNodes {
 		now := time.Now()
 
 		o.mu.Lock()
@@ -70,8 +70,9 @@ func (o *Orchestrator) EvaluateScaleUp(ctx context.Context, pending int) {
 			o.scaleUpSince = &now
 			o.mu.Unlock()
 			slog.Info("queue depth exceeded threshold, starting timer",
-				"pending", pending,
+				"total", pending,
 				"threshold", o.cfg.ScaleUpThreshold,
+				"active_nodes", activeCount,
 			)
 			return
 		}
@@ -80,7 +81,7 @@ func (o *Orchestrator) EvaluateScaleUp(ctx context.Context, pending int) {
 
 		if elapsed >= o.cfg.ScaleUpDuration {
 			if !o.CanScale() {
-				slog.Info("scale 1→2 blocked by cooldown")
+				slog.Info("scale-up blocked by cooldown")
 				return
 			}
 			if o.nodes.IsScalingInProgress() {
@@ -88,8 +89,10 @@ func (o *Orchestrator) EvaluateScaleUp(ctx context.Context, pending int) {
 				return
 			}
 
-			slog.Info("triggering scale 1→2",
-				"pending", pending,
+			slog.Info("triggering scale-up",
+				"total", pending,
+				"from", activeCount,
+				"to", activeCount+1,
 				"sustained_for", elapsed,
 			)
 
@@ -99,7 +102,7 @@ func (o *Orchestrator) EvaluateScaleUp(ctx context.Context, pending int) {
 
 			go func() {
 				if err := o.ScaleUp(ctx); err != nil {
-					slog.Error("scale 1→2 failed", "error", err)
+					slog.Error("scale-up failed", "error", err)
 				}
 			}()
 		}
@@ -113,6 +116,97 @@ func (o *Orchestrator) EvaluateScaleUp(ctx context.Context, pending int) {
 		slog.Debug("queue depth dropped below threshold, resetting timer")
 	}
 	o.mu.Unlock()
+}
+
+// EvaluateScaleDown checks request-idle time and decides whether to scale down.
+// Called on every monitor loop tick.
+func (o *Orchestrator) EvaluateScaleDown(ctx context.Context, total int) {
+	activeCount := o.nodes.ActiveCount()
+	readyNodes := o.nodes.NodesByState(StateReady)
+	if activeCount == 0 || len(readyNodes) == 0 || activeCount <= o.cfg.MinNodes {
+		o.mu.Lock()
+		o.scaleDownSince = nil
+		o.mu.Unlock()
+		return
+	}
+
+	// Any outstanding work means we are not idle.
+	if total > 0 {
+		o.mu.Lock()
+		if o.scaleDownSince != nil {
+			slog.Debug("queue total above zero, resetting scale-down idle timer",
+				"total", total,
+			)
+		}
+		o.scaleDownSince = nil
+		o.mu.Unlock()
+		return
+	}
+
+	now := time.Now()
+	o.mu.Lock()
+	if o.scaleDownSince == nil {
+		o.scaleDownSince = &now
+	}
+	elapsed := now.Sub(*o.scaleDownSince)
+	o.mu.Unlock()
+
+	var idleRequired time.Duration
+	if activeCount > 1 {
+		idleRequired = o.cfg.ScaleDownIdleDuration
+	} else {
+		idleRequired = o.cfg.ScaleToZeroIdleDuration
+	}
+
+	if elapsed < idleRequired {
+		return
+	}
+	if !o.CanScale() {
+		slog.Info("scale-down blocked by cooldown")
+		return
+	}
+	if o.nodes.IsScalingInProgress() {
+		slog.Debug("scale operation already in progress")
+		return
+	}
+
+	targetID := pickScaleDownTarget(readyNodes)
+	if targetID == 0 {
+		return
+	}
+
+	slog.Info("triggering request-idle scale-down",
+		"total", total,
+		"active_nodes", activeCount,
+		"idle_for", elapsed,
+		"idle_required", idleRequired,
+		"linode_id", targetID,
+	)
+
+	// Reset the idle timer so consecutive scale-down events require a fresh idle window.
+	o.mu.Lock()
+	o.scaleDownSince = nil
+	o.mu.Unlock()
+
+	go func(id int) {
+		if err := o.ScaleDown(ctx, id); err != nil {
+			slog.Error("request-idle scale-down failed", "linode_id", id, "error", err)
+		}
+	}(targetID)
+}
+
+func pickScaleDownTarget(nodes []*Node) int {
+	if len(nodes) == 0 {
+		return 0
+	}
+	target := nodes[0].LinodeID
+	for _, n := range nodes[1:] {
+		// Prefer the highest Linode ID (typically newest node first).
+		if n.LinodeID > target {
+			target = n.LinodeID
+		}
+	}
+	return target
 }
 
 // ScaleUp provisions a new GPU node via the Linode API.
@@ -212,6 +306,9 @@ func (o *Orchestrator) ScaleDown(ctx context.Context, linodeID int) error {
 	}
 
 	activeCount := o.nodes.ActiveCount()
+	if activeCount <= o.cfg.MinNodes {
+		return fmt.Errorf("scale-down blocked by min node floor (%d)", o.cfg.MinNodes)
+	}
 	from := fmt.Sprintf("%d", activeCount)
 	to := fmt.Sprintf("%d", activeCount-1)
 

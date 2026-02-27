@@ -1,0 +1,66 @@
+services:
+  nats-agent:
+    build:
+      context: ../../nats-agent
+      dockerfile: Dockerfile
+    environment:
+      NATS_URL: "${NATS_URL}"
+      NATS_STREAM: "${NATS_STREAM}"
+      NATS_SUBJECT: "${NATS_SUBJECT}"
+      NATS_CONSUMER: "${NATS_CONSUMER}"
+      NATS_QUEUE_GROUP: "${NATS_QUEUE_GROUP}"
+      NATS_DLQ_SUBJECT: "${NATS_DLQ_SUBJECT}"
+      NATS_DLQ_STREAM: "${NATS_DLQ_STREAM}"
+      AI_ENDPOINT: "http://ai-processor:8080/process"
+      HTTP_TIMEOUT: "${HTTP_TIMEOUT}"
+      MAX_INFLIGHT: "${MAX_INFLIGHT}"
+      ACK_WAIT: "${ACK_WAIT}"
+      MAX_DELIVER: "${MAX_DELIVER}"
+      RETRY_DELAY: "${RETRY_DELAY}"
+      DRAIN_TIMEOUT: "${DRAIN_TIMEOUT}"
+      METRICS_ADDR: ":9090"
+      LOG_LEVEL: "${LOG_LEVEL}"
+    ports:
+      - "19090:9090"
+    depends_on:
+      ai-processor:
+        condition: service_started
+    restart: unless-stopped
+
+  ai-processor:
+    build:
+      context: ../../ai-processor
+      dockerfile: Dockerfile
+    environment:
+      LISTEN_ADDR: ":8080"
+      PROCESS_DURATION: "${PROCESS_DURATION}"
+    ports:
+      - "8080:8080"
+    restart: unless-stopped
+
+  dcgm-exporter:
+    image: nvidia/dcgm-exporter:latest
+    gpus: all
+    ports:
+      - "9400:9400"
+    restart: unless-stopped
+
+  node-exporter:
+    image: prom/node-exporter:latest
+    command:
+      - "--path.procfs=/host/proc"
+      - "--path.sysfs=/host/sys"
+      - "--path.rootfs=/rootfs"
+    pid: host
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    ports:
+      - "9100:9100"
+    restart: unless-stopped
+
+networks:
+  default:
+    external: true
+    name: serverless-net

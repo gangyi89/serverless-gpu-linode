@@ -82,6 +82,7 @@ func (f *fakeCloud) ListManagedNodes(_ context.Context) ([]CloudNode, error) {
 
 func newTestOrchestrator(cloud CloudProvider) *Orchestrator {
 	cfg := Config{
+		MinNodes:              0,
 		MaxNodes:              2,
 		ScaleUpThreshold:      10,
 		ScaleUpDuration:       0, // immediate for tests
@@ -189,6 +190,24 @@ func TestScaleDown_NotFound(t *testing.T) {
 	}
 }
 
+func TestScaleDown_RespectsMinNodes(t *testing.T) {
+	cloud := newFakeCloud()
+	orch := newTestOrchestrator(cloud)
+	orch.cfg.MinNodes = 1
+
+	orch.ScaleUp(context.Background())
+	id := cloud.created[0]
+	orch.nodes.TransitionNode(id, StateReady)
+
+	err := orch.ScaleDown(context.Background(), id)
+	if err == nil {
+		t.Fatal("expected scale-down to be blocked by min node floor")
+	}
+	if orch.nodes.ActiveCount() != 1 {
+		t.Fatalf("expected node to remain active, got %d", orch.nodes.ActiveCount())
+	}
+}
+
 func TestCooldown(t *testing.T) {
 	cloud := newFakeCloud()
 	orch := newTestOrchestrator(cloud)
@@ -237,6 +256,70 @@ func TestEvaluateScaleUp_NoActionWhenIdle(t *testing.T) {
 
 	if len(cloud.created) != 0 {
 		t.Fatalf("expected no scale action with 0 pending, got %d created", len(cloud.created))
+	}
+}
+
+func TestEvaluateScaleUp_GeneralizedBeyondTwoNodes(t *testing.T) {
+	cloud := newFakeCloud()
+	cfg := Config{
+		MinNodes:              0,
+		MaxNodes:              3,
+		ScaleUpThreshold:      1,
+		ScaleUpDuration:       0,
+		CooldownDuration:      0,
+		PrometheusTargetsFile: "/tmp/test_gpu_targets.json",
+	}
+	orch := NewOrchestrator(cfg, cloud)
+
+	// Bring to 2 ready nodes first.
+	orch.ScaleUp(context.Background())
+	orch.ScaleUp(context.Background())
+	for _, id := range cloud.created {
+		orch.nodes.TransitionNode(id, StateReady)
+	}
+
+	orch.EvaluateScaleUp(context.Background(), 5)
+	orch.EvaluateScaleUp(context.Background(), 5)
+	time.Sleep(100 * time.Millisecond)
+
+	if len(cloud.created) != 3 {
+		t.Fatalf("expected scale-up from 2->3, got %d created", len(cloud.created))
+	}
+}
+
+func TestEvaluateScaleDown_TriggersOnIdle(t *testing.T) {
+	cloud := newFakeCloud()
+	orch := newTestOrchestrator(cloud)
+	orch.cfg.ScaleDownIdleDuration = 0
+	orch.cfg.ScaleToZeroIdleDuration = 0
+
+	orch.ScaleUp(context.Background())
+	id := cloud.created[0]
+	orch.nodes.TransitionNode(id, StateReady)
+
+	orch.EvaluateScaleDown(context.Background(), 0)
+	time.Sleep(100 * time.Millisecond)
+
+	if orch.nodes.ActiveCount() != 0 {
+		t.Fatalf("expected scale-down on idle to remove node, got %d active", orch.nodes.ActiveCount())
+	}
+}
+
+func TestEvaluateScaleDown_DoesNotTriggerWhenWorkExists(t *testing.T) {
+	cloud := newFakeCloud()
+	orch := newTestOrchestrator(cloud)
+	orch.cfg.ScaleDownIdleDuration = 0
+	orch.cfg.ScaleToZeroIdleDuration = 0
+
+	orch.ScaleUp(context.Background())
+	id := cloud.created[0]
+	orch.nodes.TransitionNode(id, StateReady)
+
+	orch.EvaluateScaleDown(context.Background(), 1)
+	time.Sleep(100 * time.Millisecond)
+
+	if orch.nodes.ActiveCount() != 1 {
+		t.Fatalf("expected no scale-down when total work > 0, got %d active", orch.nodes.ActiveCount())
 	}
 }
 

@@ -190,3 +190,30 @@ func TestReadyAt(t *testing.T) {
 		t.Fatal("ReadyAt should be set after transition to ready")
 	}
 }
+
+func TestTransitionNode_IdempotentReady(t *testing.T) {
+	nm := NewNodeManager(2)
+	nm.AddNode(100, "gpu-1")
+
+	if err := nm.TransitionNode(100, StateReady); err != nil {
+		t.Fatalf("unexpected error transitioning to ready: %v", err)
+	}
+
+	node, _ := nm.GetNode(100)
+	firstReadyAt := node.ReadyAt
+	if firstReadyAt.IsZero() {
+		t.Fatal("ReadyAt should be set after first transition to ready")
+	}
+
+	if err := nm.TransitionNode(100, StateReady); err != nil {
+		t.Fatalf("expected idempotent ready transition, got error: %v", err)
+	}
+
+	node, _ = nm.GetNode(100)
+	if node.State != StateReady {
+		t.Fatalf("expected node to remain in ready state, got %s", node.State)
+	}
+	if node.ReadyAt.IsZero() {
+		t.Fatal("ReadyAt should remain set after idempotent ready transition")
+	}
+}

@@ -18,16 +18,21 @@ type Config struct {
 	NatsURL      string
 	StreamName   string
 	ConsumerName string
+	DLQStream    string
+	DLQSubject   string
 
 	// Linode node identity tags
 	LinodeManagedTag string
 	LinodeClusterTag string
 
 	// Scaling thresholds
+	MinNodes         int
 	MaxNodes         int
 	ScaleUpThreshold int           // pending messages for 1→2
 	ScaleUpDuration  time.Duration // how long threshold must be exceeded
 	CooldownDuration time.Duration // minimum interval between scale events
+	ScaleDownIdleDuration   time.Duration // idle time required for 2→1
+	ScaleToZeroIdleDuration time.Duration // idle time required for 1→0
 
 	// Monitoring
 	PrometheusTargetsFile string
@@ -51,6 +56,16 @@ type Orchestrator struct {
 	metrics        *Metrics
 	lastScaleEvent time.Time
 	scaleUpSince   *time.Time // when pending first exceeded threshold (for 1→2)
+	scaleDownSince *time.Time // when queue total first became 0
+}
+
+type QueueStats struct {
+	Queued   int
+	Inflight int
+}
+
+func (q QueueStats) Total() int {
+	return q.Queued + q.Inflight
 }
 
 // NewOrchestrator creates an Orchestrator with the given configuration and cloud provider.
@@ -134,31 +149,76 @@ func (o *Orchestrator) ensureJetStreamResources() error {
 	if o.cfg.StreamName == "" {
 		return fmt.Errorf("stream name is required")
 	}
+	if o.cfg.DLQStream == "" {
+		return fmt.Errorf("dlq stream name is required")
+	}
+	if o.cfg.DLQSubject == "" {
+		return fmt.Errorf("dlq subject is required")
+	}
 
-	if _, err := o.js.StreamInfo(o.cfg.StreamName); err == nil {
-		slog.Info("JetStream stream already exists", "stream", o.cfg.StreamName)
+	if err := o.ensureStream(o.cfg.StreamName, []string{o.cfg.StreamName}, nats.WorkQueuePolicy); err != nil {
+		return err
+	}
+	return o.ensureStream(o.cfg.DLQStream, []string{o.cfg.DLQSubject}, nats.LimitsPolicy)
+}
+
+func (o *Orchestrator) ensureStream(name string, subjects []string, retention nats.RetentionPolicy) error {
+	if si, err := o.js.StreamInfo(name); err == nil {
+		needsUpdate := si.Config.Retention != retention || !sameSubjects(si.Config.Subjects, subjects)
+		if !needsUpdate {
+			slog.Info("JetStream stream already exists", "stream", name)
+			return nil
+		}
+
+		slog.Info("JetStream stream exists with different config, updating",
+			"stream", name,
+			"old_retention", si.Config.Retention.String(),
+			"new_retention", retention.String(),
+			"old_subjects", si.Config.Subjects,
+			"new_subjects", subjects,
+		)
+		if _, updateErr := o.js.UpdateStream(&nats.StreamConfig{
+			Name:      name,
+			Subjects:  subjects,
+			Storage:   nats.FileStorage,
+			Retention: retention,
+		}); updateErr != nil {
+			return fmt.Errorf("update stream %q: %w", name, updateErr)
+		}
 		return nil
 	}
 
-	slog.Info("JetStream stream missing, creating", "stream", o.cfg.StreamName)
+	slog.Info("JetStream stream missing, creating", "stream", name, "subjects", subjects)
 	_, err := o.js.AddStream(&nats.StreamConfig{
-		Name:      o.cfg.StreamName,
-		Subjects:  []string{o.cfg.StreamName},
+		Name:      name,
+		Subjects:  subjects,
 		Storage:   nats.FileStorage,
-		Retention: nats.LimitsPolicy,
+		Retention: retention,
 	})
 	if err == nil {
-		slog.Info("JetStream stream created", "stream", o.cfg.StreamName)
+		slog.Info("JetStream stream created", "stream", name)
 		return nil
 	}
 
 	// Handle startup races where another instance creates the stream first.
-	if _, infoErr := o.js.StreamInfo(o.cfg.StreamName); infoErr == nil {
-		slog.Info("JetStream stream became available during create", "stream", o.cfg.StreamName)
+	if _, infoErr := o.js.StreamInfo(name); infoErr == nil {
+		slog.Info("JetStream stream became available during create", "stream", name)
 		return nil
 	}
 
-	return fmt.Errorf("create stream %q: %w", o.cfg.StreamName, err)
+	return fmt.Errorf("create stream %q: %w", name, err)
+}
+
+func sameSubjects(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // monitorLoop periodically checks NATS queue depth and evaluates scale-up conditions.
@@ -179,22 +239,26 @@ func (o *Orchestrator) monitorLoop(ctx context.Context) {
 				continue
 			}
 
-			pending, err := o.getPendingCount()
+			queue, err := o.getQueueStats()
 			if err != nil {
-				slog.Error("failed to get pending count", "error", err)
+				slog.Error("failed to get queue stats", "error", err)
 				continue
 			}
 
-			o.metrics.QueueDepth.Set(float64(pending))
+			o.metrics.QueuePending.Set(float64(queue.Queued))
+			o.metrics.QueueAckPending.Set(float64(queue.Inflight))
+			o.metrics.QueueDepth.Set(float64(queue.Total()))
 			o.metrics.UpdateNodeCounts(o.nodes)
 
 			slog.Debug("queue status",
-				"pending", pending,
+				"total", queue.Total(),
+				"inflight", queue.Inflight,
 				"active_nodes", o.nodes.ActiveCount(),
 				"ready_nodes", o.nodes.ReadyCount(),
 			)
 
-			o.EvaluateScaleUp(ctx, pending)
+			o.EvaluateScaleUp(ctx, queue.Total())
+			o.EvaluateScaleDown(ctx, queue.Total())
 		}
 	}
 }
@@ -284,23 +348,36 @@ func isCloudNodeRunning(status string) bool {
 	return status == "running"
 }
 
-// getPendingCount returns the number of pending messages in the GPU jobs stream.
-// Falls back from consumer info to stream info when no consumers exist (0 nodes).
-func (o *Orchestrator) getPendingCount() (int, error) {
+// getQueueStats returns queue stats from JetStream.
+// Queued = not-yet-delivered; Inflight = delivered but unacknowledged.
+// Falls back to stream state when no consumer info is available.
+func (o *Orchestrator) getQueueStats() (QueueStats, error) {
 	// Try consumer info first (most accurate when consumers exist)
 	ci, err := o.js.ConsumerInfo(o.cfg.StreamName, o.cfg.ConsumerName)
 	if err == nil {
-		return int(ci.NumPending), nil
+		return QueueStats{
+			Queued:   int(ci.NumPending),
+			Inflight: int(ci.NumAckPending),
+		}, nil
 	}
 
-	// Fallback to stream info (when no consumers exist, e.g. 0 GPU nodes)
+	// Fallback to stream info only for work-queue streams where Msgs reflects
+	// unprocessed queue depth when no consumer is currently attached.
 	si, err := o.js.StreamInfo(o.cfg.StreamName)
 	if err != nil {
 		// Stream may not exist yet — that's fine, no pending messages
-		return 0, nil
+		return QueueStats{}, nil
+	}
+	if si.Config.Retention != nats.WorkQueuePolicy {
+		// For non-workqueue streams, Msgs can include already-processed history
+		// and is not a reliable "pending jobs" metric.
+		return QueueStats{}, nil
 	}
 
-	return int(si.State.Msgs), nil
+	return QueueStats{
+		Queued:   int(si.State.Msgs),
+		Inflight: 0,
+	}, nil
 }
 
 // startHTTPServer starts the HTTP server for alerts webhook, metrics, and health check.

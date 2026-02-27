@@ -31,6 +31,20 @@ The system follows an event-driven pattern where GPU nodes consume work directly
 
 ---
 
+## Current Implementation Notes
+
+The codebase currently implements the following behavior (this section is authoritative if older sections differ):
+
+- **NATS stream model:** `GPU_JOBS` uses JetStream `WorkQueuePolicy` (queue semantics), and `GPU_JOBS_DLQ` uses `LimitsPolicy` (retention for failed jobs).
+- **NATS agent consume model:** pull-based, slot-limited fetch. The agent fetches one message only when `inflight < MAX_INFLIGHT`.
+- **Ack semantics:** Option A (ack-after-completion). The agent acks only after the AI processor returns a completion `2xx` response.
+- **Long-running jobs:** the agent sends `InProgress()` heartbeats while waiting so messages are not redelivered when `ACK_WAIT` is exceeded.
+- **Scale-up signal:** orchestrator scales up from queue **total** work (`queued + inflight`), not just queued-only.
+- **Scale-down signal:** orchestrator scales down by **request-idle time** (queue total stays `0` for configured duration), not by GPU utilization alerts.
+- **Queue observability:** orchestrator exposes separate metrics for queued and inflight jobs, plus total unprocessed work.
+
+---
+
 ## 3. Components and Responsibilities
 
 Each component is a single Docker container with a single responsibility.

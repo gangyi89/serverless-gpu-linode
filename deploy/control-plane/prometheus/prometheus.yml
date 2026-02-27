@@ -1,0 +1,30 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+rule_files:
+  - /etc/prometheus/alert_rules.yml
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ["alertmanager:9093"]
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  - job_name: orchestrator
+    static_configs:
+      - targets: ["orchestrator:8081"]
+
+  - job_name: nats
+    metrics_path: /varz
+    static_configs:
+      - targets: ["nats:8222"]
+
+  - job_name: gpu-targets
+    file_sd_configs:
+      - files:
+          - /etc/prometheus/file_sd/gpu_targets.json
