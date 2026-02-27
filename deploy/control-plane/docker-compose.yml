@@ -1,0 +1,32 @@
+services:
+  nats:
+    image: nats:latest
+    command: ["-js", "-m", "8222"]
+    ports:
+      - "4222:4222"
+      - "8222:8222"
+
+  orchestrator:
+    build:
+      context: ../../orchestrator
+      dockerfile: Dockerfile
+    environment:
+      NATS_URL: "nats://nats:4222"
+      NATS_STREAM: "GPU_JOBS"
+      NATS_CONSUMER: "gpu-workers"
+      LINODE_TOKEN: "${LINODE_TOKEN}"
+      LINODE_TYPE: "${LINODE_TYPE}"
+      LINODE_ROOT_PASS: "${LINODE_ROOT_PASS}"
+      GOLDEN_IMAGE_ID: "${GOLDEN_IMAGE_ID}"
+      MONITOR_INTERVAL: "2s"
+      COOLDOWN_DURATION: "0s"
+      SCALE_UP_DURATION: "0s"
+      SCALE_UP_THRESHOLD: "1"
+      PROMETHEUS_TARGETS_FILE: "/tmp/gpu_targets.json"
+      LISTEN_ADDR: ":8081"
+      LOG_LEVEL: "DEBUG"
+    ports:
+      - "8081:8081"
+    depends_on:
+      nats:
+        condition: service_started

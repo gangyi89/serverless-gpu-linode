@@ -1,0 +1,37 @@
+# Go binaries
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Go build output
+/gateway/gateway
+/orchestrator/orchestrator
+/nats-agent/nats-agent
+/ai-processor/ai-processor
+
+# Go test binary
+*.test
+
+# Go coverage
+*.out
+*.prof
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment files
+.env
+deploy/control-plane/.env
+*.env.local
+
+# Dependency directories
+vendor/
