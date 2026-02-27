@@ -17,6 +17,15 @@ type CloudProvider interface {
 	CreateGPUNode(ctx context.Context, label string) (id int, err error)
 	WaitForRunning(ctx context.Context, id int, timeout time.Duration) (ip string, err error)
 	DestroyNode(ctx context.Context, id int) error
+	ListManagedNodes(ctx context.Context) ([]CloudNode, error)
+}
+
+// CloudNode is the cloud-provider view of a managed GPU node.
+type CloudNode struct {
+	LinodeID int
+	Label    string
+	IPv4     string
+	Status   string
 }
 
 // LinodeClient implements CloudProvider using the Linode API.
@@ -26,9 +35,10 @@ type LinodeClient struct {
 	region       string
 	instanceType string
 	rootPass     string
+	managedTags  []string
 }
 
-func NewLinodeClient(token, imageID, region, instanceType, rootPass string) *LinodeClient {
+func NewLinodeClient(token, imageID, region, instanceType, rootPass string, managedTags []string) *LinodeClient {
 	tokenSource := oauth2.StaticTokenSource(&oauth2.Token{AccessToken: token})
 	oauthClient := &http.Client{
 		Transport: &oauth2.Transport{Source: tokenSource},
@@ -41,6 +51,7 @@ func NewLinodeClient(token, imageID, region, instanceType, rootPass string) *Lin
 		region:       region,
 		instanceType: instanceType,
 		rootPass:     rootPass,
+		managedTags:  managedTags,
 	}
 }
 
@@ -60,6 +71,7 @@ func (l *LinodeClient) CreateGPUNode(ctx context.Context, label string) (int, er
 		Image:    l.imageID,
 		RootPass: l.rootPass,
 		Booted:   &booted,
+		Tags:     l.managedTags,
 	})
 	if err != nil {
 		return 0, fmt.Errorf("failed to create instance: %w", err)
@@ -108,4 +120,48 @@ func (l *LinodeClient) DestroyNode(ctx context.Context, linodeID int) error {
 	}
 	slog.Info("GPU node destroyed", "linode_id", linodeID)
 	return nil
+}
+
+func (l *LinodeClient) ListManagedNodes(ctx context.Context) ([]CloudNode, error) {
+	instances, err := l.client.ListInstances(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list instances: %w", err)
+	}
+
+	nodes := make([]CloudNode, 0, len(instances))
+	for _, inst := range instances {
+		if !containsAllTags(inst.Tags, l.managedTags) {
+			continue
+		}
+
+		ip := ""
+		if len(inst.IPv4) > 0 {
+			ip = inst.IPv4[0].String()
+		}
+
+		nodes = append(nodes, CloudNode{
+			LinodeID: inst.ID,
+			Label:    inst.Label,
+			IPv4:     ip,
+			Status:   string(inst.Status),
+		})
+	}
+
+	return nodes, nil
+}
+
+func containsAllTags(instanceTags, requiredTags []string) bool {
+	for _, required := range requiredTags {
+		found := false
+		for _, tag := range instanceTags {
+			if tag == required {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
 }

@@ -22,6 +22,8 @@ func main() {
 		"nats_url", cfg.NatsURL,
 		"stream", cfg.StreamName,
 		"consumer", cfg.ConsumerName,
+		"linode_managed_tag", cfg.LinodeManagedTag,
+		"linode_cluster_tag", cfg.LinodeClusterTag,
 		"max_nodes", cfg.MaxNodes,
 		"scale_up_threshold", cfg.ScaleUpThreshold,
 		"scale_up_duration", cfg.ScaleUpDuration,
@@ -50,6 +52,8 @@ func loadConfig() Config {
 		NatsURL:      envOrDefault("NATS_URL", "nats://localhost:4222"),
 		StreamName:   envOrDefault("NATS_STREAM", "GPU_JOBS"),
 		ConsumerName: envOrDefault("NATS_CONSUMER", "gpu-workers"),
+		LinodeManagedTag: envOrDefault("LINODE_MANAGED_TAG", "serverless-gpu-managed"),
+		LinodeClusterTag: envOrDefault("LINODE_CLUSTER_TAG", "serverless-gpu-default"),
 
 		MaxNodes:         envOrDefaultInt("MAX_NODES", 2),
 		ScaleUpThreshold: envOrDefaultInt("SCALE_UP_THRESHOLD", 10),
@@ -70,6 +74,10 @@ func loadLinodeClient() *LinodeClient {
 		envOrDefault("LINODE_REGION", "sg-sin-2"),
 		envOrDefault("LINODE_TYPE", "g1-gpu-rtx6000-1"),
 		os.Getenv("LINODE_ROOT_PASS"),
+		[]string{
+			envOrDefault("LINODE_MANAGED_TAG", "serverless-gpu-managed"),
+			envOrDefault("LINODE_CLUSTER_TAG", "serverless-gpu-default"),
+		},
 	)
 }
 

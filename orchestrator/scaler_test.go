@@ -56,6 +56,30 @@ func (f *fakeCloud) DestroyNode(_ context.Context, id int) error {
 	return nil
 }
 
+func (f *fakeCloud) ListManagedNodes(_ context.Context) ([]CloudNode, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	destroyed := make(map[int]struct{}, len(f.destroyed))
+	for _, id := range f.destroyed {
+		destroyed[id] = struct{}{}
+	}
+
+	nodes := make([]CloudNode, 0, len(f.created))
+	for _, id := range f.created {
+		if _, wasDestroyed := destroyed[id]; wasDestroyed {
+			continue
+		}
+		nodes = append(nodes, CloudNode{
+			LinodeID: id,
+			Label:    fmt.Sprintf("gpu-node-%d", id),
+			IPv4:     fmt.Sprintf("10.0.0.%d", id%256),
+			Status:   "running",
+		})
+	}
+	return nodes, nil
+}
+
 func newTestOrchestrator(cloud CloudProvider) *Orchestrator {
 	cfg := Config{
 		MaxNodes:              2,

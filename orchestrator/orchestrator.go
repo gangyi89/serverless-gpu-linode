@@ -19,6 +19,10 @@ type Config struct {
 	StreamName   string
 	ConsumerName string
 
+	// Linode node identity tags
+	LinodeManagedTag string
+	LinodeClusterTag string
+
 	// Scaling thresholds
 	MaxNodes         int
 	ScaleUpThreshold int           // pending messages for 1→2
@@ -71,6 +75,11 @@ func (o *Orchestrator) Run(ctx context.Context) error {
 	// Ensure required JetStream resources exist before monitoring.
 	if err := o.ensureJetStreamResources(); err != nil {
 		return fmt.Errorf("failed to ensure JetStream resources: %w", err)
+	}
+
+	// Reconcile local state from Linode API at startup.
+	if err := o.reconcileWithCloud(ctx); err != nil {
+		slog.Warn("initial cloud reconciliation failed", "error", err)
 	}
 
 	// Write initial empty targets file
@@ -165,6 +174,11 @@ func (o *Orchestrator) monitorLoop(ctx context.Context) {
 			slog.Info("monitor loop stopped")
 			return
 		case <-ticker.C:
+			if err := o.reconcileWithCloud(ctx); err != nil {
+				slog.Error("failed to reconcile cloud node state", "error", err)
+				continue
+			}
+
 			pending, err := o.getPendingCount()
 			if err != nil {
 				slog.Error("failed to get pending count", "error", err)
@@ -183,6 +197,91 @@ func (o *Orchestrator) monitorLoop(ctx context.Context) {
 			o.EvaluateScaleUp(ctx, pending)
 		}
 	}
+}
+
+// reconcileWithCloud syncs in-memory node state from Linode API.
+// Linode is treated as the source of truth for managed node existence and runtime status.
+func (o *Orchestrator) reconcileWithCloud(ctx context.Context) error {
+	cloudNodes, err := o.linode.ListManagedNodes(ctx)
+	if err != nil {
+		return err
+	}
+
+	seen := make(map[int]struct{}, len(cloudNodes))
+	changed := false
+
+	for _, cn := range cloudNodes {
+		seen[cn.LinodeID] = struct{}{}
+
+		node, exists := o.nodes.GetNode(cn.LinodeID)
+		if !exists {
+			if _, addErr := o.nodes.AddNode(cn.LinodeID, cn.Label); addErr != nil {
+				slog.Warn("failed to add cloud node to state manager",
+					"linode_id", cn.LinodeID,
+					"label", cn.Label,
+					"error", addErr,
+				)
+				continue
+			}
+			changed = true
+			node, _ = o.nodes.GetNode(cn.LinodeID)
+		}
+
+		if cn.IPv4 != "" && node.IPv4 != cn.IPv4 {
+			if setErr := o.nodes.SetNodeIP(cn.LinodeID, cn.IPv4); setErr != nil {
+				slog.Warn("failed to update node IP from cloud state",
+					"linode_id", cn.LinodeID,
+					"error", setErr,
+				)
+			} else {
+				changed = true
+			}
+		}
+
+		if isCloudNodeRunning(cn.Status) && node.State == StateProvisioning {
+			if trErr := o.nodes.TransitionNode(cn.LinodeID, StateReady); trErr != nil {
+				slog.Warn("failed to transition node to ready from cloud state",
+					"linode_id", cn.LinodeID,
+					"error", trErr,
+				)
+			} else {
+				changed = true
+			}
+		}
+
+		if !isCloudNodeRunning(cn.Status) && node.State == StateReady {
+			slog.Warn("tracked ready node is not running in Linode API",
+				"linode_id", cn.LinodeID,
+				"status", cn.Status,
+			)
+		}
+	}
+
+	for _, local := range o.nodes.AllNodes() {
+		if _, ok := seen[local.LinodeID]; ok {
+			continue
+		}
+		// Do not eagerly remove fresh provisioning nodes to avoid race with eventual consistency.
+		if local.State == StateProvisioning {
+			continue
+		}
+		o.nodes.RemoveNode(local.LinodeID)
+		changed = true
+		slog.Info("removed stale node from local state", "linode_id", local.LinodeID)
+	}
+
+	if changed {
+		o.metrics.UpdateNodeCounts(o.nodes)
+		if err := WriteTargetsFile(o.cfg.PrometheusTargetsFile, o.nodes); err != nil {
+			slog.Warn("failed to write targets file after reconciliation", "error", err)
+		}
+	}
+
+	return nil
+}
+
+func isCloudNodeRunning(status string) bool {
+	return status == "running"
 }
 
 // getPendingCount returns the number of pending messages in the GPU jobs stream.
