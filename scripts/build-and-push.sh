@@ -18,11 +18,12 @@ build_and_push() {
   local context_dir="$2"
   local image="${REGISTRY}/${PREFIX}${name}:${TAG}"
 
-  echo "Building ${image}"
-  docker build -t "${image}" "${ROOT_DIR}/${context_dir}"
-
-  echo "Pushing ${image}"
-  docker push "${image}"
+  echo "Building and pushing ${image} for linux/amd64"
+  docker buildx build \
+    --platform linux/amd64 \
+    -t "${image}" \
+    --push \
+    "${ROOT_DIR}/${context_dir}"
 }
 
 build_and_push "orchestrator" "orchestrator"
