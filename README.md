@@ -36,12 +36,12 @@ The system follows an event-driven pattern where GPU nodes consume work directly
 The codebase currently implements the following behavior (this section is authoritative if older sections differ):
 
 - **NATS stream model:** `GPU_JOBS` uses JetStream `WorkQueuePolicy` (queue semantics), and `GPU_JOBS_DLQ` uses `LimitsPolicy` (retention for failed jobs).
-- **NATS agent consume model:** pull-based, slot-limited fetch. The agent fetches one message only when `inflight < MAX_INFLIGHT`.
+- **NATS agent consume model:** pull-based, slot-limited fetch. The agent fetches one message only when `acks_pending < MAX_INFLIGHT`.
 - **Ack semantics:** Option A (ack-after-completion). The agent acks only after the AI processor returns a completion `2xx` response.
 - **Long-running jobs:** the agent sends `InProgress()` heartbeats while waiting so messages are not redelivered when `ACK_WAIT` is exceeded.
-- **Scale-up signal:** orchestrator scales up from queue **total** work (`queued + inflight`), not just queued-only.
-- **Scale-down signal:** orchestrator scales down by **request-idle time** (queue total stays `0` for configured duration), not by GPU utilization alerts.
-- **Queue observability:** orchestrator exposes separate metrics for queued and inflight jobs, plus total unprocessed work.
+- **Scale-up signal:** orchestrator scales up from queue **pending work** (`pending + acks pending`), not pending-only.
+- **Scale-down signal:** orchestrator scales down by **request-idle time** (queue pending stays `0` for configured duration), not by GPU utilization alerts.
+- **Queue observability:** orchestrator exposes separate metrics for `pending` and `acks pending`, plus combined pending work.
 
 ---
 
@@ -150,7 +150,7 @@ services:
 
 #### 3.3.3 NATS Message Delivery (Phase 1 — Fire-and-Forget)
 
-Once NATS delivers a message to a node's agent, that message enters an **in-flight** state and is invisible to all other consumers. There is no risk of duplicate processing across nodes. In Phase 1, the agent acks the message as soon as it successfully delivers the payload to the AI Processor's HTTP endpoint. This keeps the queue moving and the implementation simple.
+Once NATS delivers a message to a node's agent, that message enters an **acks pending** state and is invisible to all other consumers. There is no risk of duplicate processing across nodes. In Phase 1, the agent acks the message as soon as it successfully delivers the payload to the AI Processor's HTTP endpoint. This keeps the queue moving and the implementation simple.
 
 Future phases can introduce ack-after-completion semantics with AckWait timeouts and retry logic if guaranteed processing is required.
 
@@ -188,7 +188,7 @@ The Orchestrator is a pure infrastructure controller. It never touches request t
 - **State machine** — track node lifecycle states to prevent race conditions (see Section 4.6)
 - **Expose `/metrics`** — publish Prometheus metrics including current queue depth, node count, node states, provisioning latency, and cooldown status
 - **Cooldown logic** — enforce minimum intervals between scale events to prevent flapping
-- **Graceful drain coordination** — before destroying a node, signal it to unsubscribe from NATS, wait for in-flight jobs to complete, then issue the destroy call
+- **Graceful drain coordination** — before destroying a node, signal it to unsubscribe from NATS, wait for acks-pending jobs to complete, then issue the destroy call
 
 ### 3.5 Monitoring Stack: Prometheus + Alertmanager + Grafana (Docker Containers)
 

@@ -46,9 +46,9 @@ func TestWriteTargetsFile_OneReadyNode(t *testing.T) {
 	var targets []PrometheusTarget
 	json.Unmarshal(data, &targets)
 
-	// One node → two targets (DCGM on :9400, Node Exporter on :9100)
-	if len(targets) != 2 {
-		t.Fatalf("expected 2 targets for 1 node, got %d", len(targets))
+	// One node → three targets (DCGM on :9400, Node Exporter on :9100, NATS Agent on :19090)
+	if len(targets) != 3 {
+		t.Fatalf("expected 3 targets for 1 node, got %d", len(targets))
 	}
 
 	ports := map[string]bool{}
@@ -64,6 +64,9 @@ func TestWriteTargetsFile_OneReadyNode(t *testing.T) {
 	}
 	if !ports["10.0.0.1:9100"] {
 		t.Fatal("missing Node Exporter target 10.0.0.1:9100")
+	}
+	if !ports["10.0.0.1:19090"] {
+		t.Fatal("missing NATS Agent target 10.0.0.1:19090")
 	}
 }
 
@@ -102,8 +105,8 @@ func TestWriteTargetsFile_TwoNodes(t *testing.T) {
 	var targets []PrometheusTarget
 	json.Unmarshal(data, &targets)
 
-	// Two nodes → four targets
-	if len(targets) != 4 {
-		t.Fatalf("expected 4 targets for 2 nodes, got %d", len(targets))
+	// Two nodes → six targets
+	if len(targets) != 6 {
+		t.Fatalf("expected 6 targets for 2 nodes, got %d", len(targets))
 	}
 }

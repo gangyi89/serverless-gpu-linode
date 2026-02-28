@@ -23,107 +23,87 @@
   "liveNow": false,
   "panels": [
     {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "percentunit",
-          "min": 0,
-          "max": 1
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 0,
-        "y": 0
-      },
-      "id": 1,
-      "options": {
-        "legend": {
-          "displayMode": "table",
-          "placement": "bottom"
-        }
-      },
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+      "id": 100,
+      "panels": [],
+      "title": "1) Agent Telemetry (nats-agent)",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 1 },
+      "id": 101,
+      "options": { "legend": { "displayMode": "table", "placement": "bottom" } },
       "targets": [
         {
-          "expr": "1 - avg by(instance) (rate(node_cpu_seconds_total{mode=\"idle\",job=\"node-exporter\"}[5m]))",
-          "legendFormat": "{{instance}}",
+          "expr": "sum by(node, instance) (rate(nats_agent_messages_received_total{job=\"nats-agent\",node=~\"$node\",instance=~\"$instance\"}[5m]))",
+          "legendFormat": "{{node}} {{instance}}",
           "refId": "A"
         }
       ],
-      "title": "Host CPU Usage",
+      "title": "Receive Rate",
       "type": "timeseries"
     },
     {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "percentunit",
-          "min": 0,
-          "max": 1
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 12,
-        "y": 0
-      },
-      "id": 2,
-      "options": {
-        "legend": {
-          "displayMode": "table",
-          "placement": "bottom"
-        }
-      },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 1 },
+      "id": 102,
+      "options": { "legend": { "displayMode": "table", "placement": "bottom" } },
       "targets": [
         {
-          "expr": "(1 - (node_memory_MemAvailable_bytes{job=\"node-exporter\"} / node_memory_MemTotal_bytes{job=\"node-exporter\"}))",
-          "legendFormat": "{{instance}}",
+          "expr": "sum by(node, instance) (rate(nats_agent_messages_acked_total{job=\"nats-agent\",node=~\"$node\",instance=~\"$instance\"}[5m]))",
+          "legendFormat": "{{node}} acked",
+          "refId": "A"
+        },
+        {
+          "expr": "sum by(node, instance) (rate(nats_agent_messages_nacked_total{job=\"nats-agent\",node=~\"$node\",instance=~\"$instance\"}[5m]))",
+          "legendFormat": "{{node}} nacked",
+          "refId": "B"
+        }
+      ],
+      "title": "Ack / Nack Rate",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short", "min": 0 }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 1 },
+      "id": 103,
+      "options": { "legend": { "displayMode": "table", "placement": "bottom" } },
+      "targets": [
+        {
+          "expr": "max by(node, instance) (nats_agent_inflight_messages{job=\"nats-agent\",node=~\"$node\",instance=~\"$instance\"})",
+          "legendFormat": "{{node}} {{instance}}",
           "refId": "A"
         }
       ],
-      "title": "Host Memory Usage",
+      "title": "Inflight Handlers",
       "type": "timeseries"
     },
     {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 9 },
+      "id": 200,
+      "panels": [],
+      "title": "2) GPU Telemetry (DCGM)",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
       "fieldConfig": {
-        "defaults": {
-          "unit": "percent",
-          "min": 0,
-          "max": 100
-        },
+        "defaults": { "unit": "percent", "min": 0, "max": 100 },
         "overrides": []
       },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 0,
-        "y": 8
-      },
-      "id": 3,
-      "options": {
-        "legend": {
-          "displayMode": "table",
-          "placement": "bottom"
-        }
-      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 10 },
+      "id": 201,
+      "options": { "legend": { "displayMode": "table", "placement": "bottom" } },
       "targets": [
         {
-          "expr": "DCGM_FI_DEV_GPU_UTIL{job=\"dcgm-exporter\"}",
-          "legendFormat": "{{instance}} gpu={{gpu}}",
+          "expr": "DCGM_FI_DEV_GPU_UTIL{job=\"dcgm-exporter\",node=~\"$node\",instance=~\"$instance\"}",
+          "legendFormat": "{{node}} gpu={{gpu}}",
           "refId": "A"
         }
       ],
@@ -131,64 +111,110 @@
       "type": "timeseries"
     },
     {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "bytes"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 12,
-        "y": 8
-      },
-      "id": 4,
-      "options": {
-        "legend": {
-          "displayMode": "table",
-          "placement": "bottom"
-        }
-      },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "bytes" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 10 },
+      "id": 202,
+      "options": { "legend": { "displayMode": "table", "placement": "bottom" } },
       "targets": [
         {
-          "expr": "DCGM_FI_DEV_FB_USED{job=\"dcgm-exporter\"} * 1024 * 1024",
-          "legendFormat": "{{instance}} gpu={{gpu}} used",
+          "expr": "DCGM_FI_DEV_FB_USED{job=\"dcgm-exporter\",node=~\"$node\",instance=~\"$instance\"} * 1024 * 1024",
+          "legendFormat": "{{node}} gpu={{gpu}} used",
           "refId": "A"
         },
         {
-          "expr": "DCGM_FI_DEV_FB_TOTAL{job=\"dcgm-exporter\"} * 1024 * 1024",
-          "legendFormat": "{{instance}} gpu={{gpu}} total",
+          "expr": "DCGM_FI_DEV_FB_TOTAL{job=\"dcgm-exporter\",node=~\"$node\",instance=~\"$instance\"} * 1024 * 1024",
+          "legendFormat": "{{node}} gpu={{gpu}} total",
           "refId": "B"
         }
       ],
       "title": "GPU Memory (Used / Total)",
+      "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 18 },
+      "id": 300,
+      "panels": [],
+      "title": "3) Node Telemetry (node-exporter)",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": { "unit": "percentunit", "min": 0, "max": 1 },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 19 },
+      "id": 301,
+      "options": { "legend": { "displayMode": "table", "placement": "bottom" } },
+      "targets": [
+        {
+          "expr": "1 - avg by(node, instance) (rate(node_cpu_seconds_total{mode=\"idle\",job=\"node-exporter\",node=~\"$node\",instance=~\"$instance\"}[5m]))",
+          "legendFormat": "{{node}} {{instance}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Host CPU Usage",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": { "unit": "percentunit", "min": 0, "max": 1 },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 19 },
+      "id": 302,
+      "options": { "legend": { "displayMode": "table", "placement": "bottom" } },
+      "targets": [
+        {
+          "expr": "1 - (node_memory_MemAvailable_bytes{job=\"node-exporter\",node=~\"$node\",instance=~\"$instance\"} / node_memory_MemTotal_bytes{job=\"node-exporter\",node=~\"$node\",instance=~\"$instance\"})",
+          "legendFormat": "{{node}} {{instance}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Host Memory Usage",
       "type": "timeseries"
     }
   ],
   "refresh": "10s",
   "schemaVersion": 39,
   "style": "dark",
-  "tags": [
-    "serverless-gpu",
-    "node",
-    "gpu"
-  ],
+  "tags": ["serverless-gpu", "node", "gpu", "nats-agent"],
   "templating": {
-    "list": []
+    "list": [
+      {
+        "name": "node",
+        "label": "Node",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "prometheus" },
+        "query": { "query": "label_values({job=~\"nats-agent|dcgm-exporter|node-exporter\"}, node)" },
+        "includeAll": true,
+        "allValue": ".*",
+        "multi": true,
+        "refresh": 2,
+        "current": { "text": "All", "value": ".*" }
+      },
+      {
+        "name": "instance",
+        "label": "Instance",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "prometheus" },
+        "query": { "query": "label_values({job=~\"nats-agent|dcgm-exporter|node-exporter\",node=~\"$node\"}, instance)" },
+        "includeAll": true,
+        "allValue": ".*",
+        "multi": true,
+        "refresh": 2,
+        "current": { "text": "All", "value": ".*" }
+      }
+    ]
   },
-  "time": {
-    "from": "now-30m",
-    "to": "now"
-  },
+  "time": { "from": "now-1h", "to": "now" },
   "timepicker": {},
   "timezone": "",
   "title": "GPU Node Overview",
   "uid": "gpu-node-overview",
-  "version": 1,
+  "version": 3,
   "weekStart": ""
 }

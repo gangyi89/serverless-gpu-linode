@@ -70,7 +70,7 @@ func (o *Orchestrator) EvaluateScaleUp(ctx context.Context, pending int) {
 			o.scaleUpSince = &now
 			o.mu.Unlock()
 			slog.Info("queue depth exceeded threshold, starting timer",
-				"total", pending,
+					"pending", pending,
 				"threshold", o.cfg.ScaleUpThreshold,
 				"active_nodes", activeCount,
 			)
@@ -90,7 +90,7 @@ func (o *Orchestrator) EvaluateScaleUp(ctx context.Context, pending int) {
 			}
 
 			slog.Info("triggering scale-up",
-				"total", pending,
+				"pending", pending,
 				"from", activeCount,
 				"to", activeCount+1,
 				"sustained_for", elapsed,
@@ -120,7 +120,7 @@ func (o *Orchestrator) EvaluateScaleUp(ctx context.Context, pending int) {
 
 // EvaluateScaleDown checks request-idle time and decides whether to scale down.
 // Called on every monitor loop tick.
-func (o *Orchestrator) EvaluateScaleDown(ctx context.Context, total int) {
+func (o *Orchestrator) EvaluateScaleDown(ctx context.Context, pending int) {
 	activeCount := o.nodes.ActiveCount()
 	readyNodes := o.nodes.NodesByState(StateReady)
 	if activeCount == 0 || len(readyNodes) == 0 || activeCount <= o.cfg.MinNodes {
@@ -131,11 +131,11 @@ func (o *Orchestrator) EvaluateScaleDown(ctx context.Context, total int) {
 	}
 
 	// Any outstanding work means we are not idle.
-	if total > 0 {
+	if pending > 0 {
 		o.mu.Lock()
 		if o.scaleDownSince != nil {
-			slog.Debug("queue total above zero, resetting scale-down idle timer",
-				"total", total,
+			slog.Debug("queue pending above zero, resetting scale-down idle timer",
+				"pending", pending,
 			)
 		}
 		o.scaleDownSince = nil
@@ -176,7 +176,7 @@ func (o *Orchestrator) EvaluateScaleDown(ctx context.Context, total int) {
 	}
 
 	slog.Info("triggering request-idle scale-down",
-		"total", total,
+		"pending", pending,
 		"active_nodes", activeCount,
 		"idle_for", elapsed,
 		"idle_required", idleRequired,

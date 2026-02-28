@@ -44,6 +44,16 @@ func WriteTargetsFile(path string, nm *NodeManager) error {
 				"node":      node.Label,
 			},
 		})
+
+		// NATS Agent — worker/queue bridge metrics on host port 19090
+		targets = append(targets, PrometheusTarget{
+			Targets: []string{fmt.Sprintf("%s:19090", node.IPv4)},
+			Labels: map[string]string{
+				"job":       "nats-agent",
+				"linode_id": fmt.Sprintf("%d", node.LinodeID),
+				"node":      node.Label,
+			},
+		})
 	}
 
 	// Write empty array instead of null when no targets

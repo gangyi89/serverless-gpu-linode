@@ -36,7 +36,7 @@ curl -sS "http://localhost:8222/jsz?streams=true" \
 | jq '[.account_details[].stream_detail[] | select(.name=="GPU_JOBS") | .state.messages][0] // 0'
 ```
 
-### 7) Check queued vs inflight vs total (from orchestrator)
+### 7) Check pending vs acks pending vs total (from orchestrator)
 ```bash
 curl -sS "http://localhost:8081/metrics" | rg "orchestrator_queue_(pending|ack_pending|depth)"
 ```

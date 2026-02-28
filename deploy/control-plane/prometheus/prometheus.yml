@@ -20,9 +20,8 @@ scrape_configs:
       - targets: ["orchestrator:8081"]
 
   - job_name: nats
-    metrics_path: /varz
     static_configs:
-      - targets: ["nats:8222"]
+      - targets: ["nats-exporter:7777"]
 
   - job_name: gpu-targets
     file_sd_configs:

@@ -28,15 +28,15 @@ func NewMetrics() *Metrics {
 		Registry: reg,
 		QueueDepth: factory.NewGauge(prometheus.GaugeOpts{
 			Name: "orchestrator_queue_depth",
-			Help: "Current total unprocessed jobs (queued + inflight)",
+			Help: "Current pending work (pending + acks pending)",
 		}),
 		QueuePending: factory.NewGauge(prometheus.GaugeOpts{
 			Name: "orchestrator_queue_pending",
-			Help: "Current queued jobs (not-yet-delivered)",
+			Help: "Current pending jobs (not-yet-delivered)",
 		}),
 		QueueAckPending: factory.NewGauge(prometheus.GaugeOpts{
 			Name: "orchestrator_queue_ack_pending",
-			Help: "Current inflight jobs (delivered but unacknowledged)",
+			Help: "Current acks pending jobs (delivered but unacknowledged)",
 		}),
 		NodeCount: factory.NewGauge(prometheus.GaugeOpts{
 			Name: "orchestrator_node_count",

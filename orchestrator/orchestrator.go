@@ -56,16 +56,16 @@ type Orchestrator struct {
 	metrics        *Metrics
 	lastScaleEvent time.Time
 	scaleUpSince   *time.Time // when pending first exceeded threshold (for 1→2)
-	scaleDownSince *time.Time // when queue total first became 0
+	scaleDownSince *time.Time // when queue pending first became 0
 }
 
 type QueueStats struct {
-	Queued   int
-	Inflight int
+	Pending     int
+	AcksPending int
 }
 
-func (q QueueStats) Total() int {
-	return q.Queued + q.Inflight
+func (q QueueStats) PendingWork() int {
+	return q.Pending + q.AcksPending
 }
 
 // NewOrchestrator creates an Orchestrator with the given configuration and cloud provider.
@@ -245,20 +245,20 @@ func (o *Orchestrator) monitorLoop(ctx context.Context) {
 				continue
 			}
 
-			o.metrics.QueuePending.Set(float64(queue.Queued))
-			o.metrics.QueueAckPending.Set(float64(queue.Inflight))
-			o.metrics.QueueDepth.Set(float64(queue.Total()))
+			o.metrics.QueuePending.Set(float64(queue.Pending))
+			o.metrics.QueueAckPending.Set(float64(queue.AcksPending))
+			o.metrics.QueueDepth.Set(float64(queue.PendingWork()))
 			o.metrics.UpdateNodeCounts(o.nodes)
 
 			slog.Debug("queue status",
-				"total", queue.Total(),
-				"inflight", queue.Inflight,
+				"pending", queue.PendingWork(),
+				"acks_pending", queue.AcksPending,
 				"active_nodes", o.nodes.ActiveCount(),
 				"ready_nodes", o.nodes.ReadyCount(),
 			)
 
-			o.EvaluateScaleUp(ctx, queue.Total())
-			o.EvaluateScaleDown(ctx, queue.Total())
+			o.EvaluateScaleUp(ctx, queue.PendingWork())
+			o.EvaluateScaleDown(ctx, queue.PendingWork())
 		}
 	}
 }
@@ -349,15 +349,15 @@ func isCloudNodeRunning(status string) bool {
 }
 
 // getQueueStats returns queue stats from JetStream.
-// Queued = not-yet-delivered; Inflight = delivered but unacknowledged.
+// Pending = not-yet-delivered; AcksPending = delivered but unacknowledged.
 // Falls back to stream state when no consumer info is available.
 func (o *Orchestrator) getQueueStats() (QueueStats, error) {
 	// Try consumer info first (most accurate when consumers exist)
 	ci, err := o.js.ConsumerInfo(o.cfg.StreamName, o.cfg.ConsumerName)
 	if err == nil {
 		return QueueStats{
-			Queued:   int(ci.NumPending),
-			Inflight: int(ci.NumAckPending),
+			Pending:     int(ci.NumPending),
+			AcksPending: int(ci.NumAckPending),
 		}, nil
 	}
 
@@ -375,8 +375,8 @@ func (o *Orchestrator) getQueueStats() (QueueStats, error) {
 	}
 
 	return QueueStats{
-		Queued:   int(si.State.Msgs),
-		Inflight: 0,
+		Pending:     int(si.State.Msgs),
+		AcksPending: 0,
 	}, nil
 }
 

@@ -39,6 +39,19 @@ services:
       nats:
         condition: service_started
 
+  nats-exporter:
+    image: natsio/prometheus-nats-exporter:latest
+    command:
+      - -varz
+      - -connz
+      - -routez
+      - -subz
+      - -jsz=all
+      - http://nats:8222
+    depends_on:
+      nats:
+        condition: service_started
+
   prometheus:
     image: prom/prometheus:latest
     command:
@@ -56,6 +69,8 @@ services:
       orchestrator:
         condition: service_started
       alertmanager:
+        condition: service_started
+      nats-exporter:
         condition: service_started
 
   alertmanager:
