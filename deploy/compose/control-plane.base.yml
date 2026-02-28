@@ -112,3 +112,8 @@ volumes:
   prometheus_data:
   alertmanager_data:
   grafana_data:
+
+networks:
+  default:
+    external: true
+    name: serverless-net
