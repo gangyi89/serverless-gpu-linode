@@ -30,9 +30,6 @@ Thumbs.db
 
 # Environment files
 .env
-deploy/control-plane/.env
-deploy/gpu-node/.env
-deploy/envs/**/*.env
 deploy/local/env/*.env
 deploy/integration/env/*.env
 *.env.local

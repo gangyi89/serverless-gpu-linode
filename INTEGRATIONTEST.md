@@ -80,10 +80,10 @@ Use this when you have a dashboard JSON (for example, `serverless-gpu-overview`)
 If you want it to survive container restarts/redeploys:
 
 1) Save the JSON file under:
-   `deploy/control-plane/grafana/dashboards/serverless-gpu-overview.json`
+   `deploy/shared/grafana/dashboards/serverless-gpu-overview.json`
 2) Restart Grafana:
 ```bash
 docker compose -f deploy/local/control-plane.compose.yml --env-file deploy/local/env/control-plane.env up -d grafana
 ```
 
-Grafana provisioning will auto-load dashboard files from `deploy/control-plane/grafana/dashboards`.
+Grafana provisioning will auto-load dashboard files from `deploy/shared/grafana/dashboards`.

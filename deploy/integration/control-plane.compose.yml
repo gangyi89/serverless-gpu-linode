@@ -35,7 +35,7 @@ services:
     ports:
       - "8081:8081"
     volumes:
-      - ../control-plane/prometheus/file_sd:/etc/prometheus/file_sd
+      - ../shared/prometheus/file_sd:/etc/prometheus/file_sd
     depends_on:
       nats:
         condition: service_started
@@ -64,9 +64,9 @@ services:
     ports:
       - "9090:9090"
     volumes:
-      - ../control-plane/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
-      - ../control-plane/prometheus/alert_rules.yml:/etc/prometheus/alert_rules.yml:ro
-      - ../control-plane/prometheus/file_sd:/etc/prometheus/file_sd
+      - ../shared/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ../shared/prometheus/alert_rules.yml:/etc/prometheus/alert_rules.yml:ro
+      - ../shared/prometheus/file_sd:/etc/prometheus/file_sd
       - prometheus_data:/prometheus
     depends_on:
       orchestrator:
@@ -85,7 +85,7 @@ services:
     ports:
       - "9093:9093"
     volumes:
-      - ../control-plane/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - ../shared/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
       - alertmanager_data:/alertmanager
     depends_on:
       orchestrator:
@@ -101,9 +101,9 @@ services:
       - "3000:3000"
     volumes:
       - grafana_data:/var/lib/grafana
-      - ../control-plane/grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:ro
-      - ../control-plane/grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
-      - ../control-plane/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - ../shared/grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:ro
+      - ../shared/grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ../shared/grafana/dashboards:/var/lib/grafana/dashboards:ro
     depends_on:
       prometheus:
         condition: service_started
