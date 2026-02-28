@@ -1,0 +1,19 @@
+services:
+  nats:
+    restart: unless-stopped
+
+  orchestrator:
+    pull_policy: always
+    restart: unless-stopped
+
+  nats-exporter:
+    restart: unless-stopped
+
+  prometheus:
+    restart: unless-stopped
+
+  alertmanager:
+    restart: unless-stopped
+
+  grafana:
+    restart: unless-stopped

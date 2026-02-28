@@ -31,6 +31,8 @@ Thumbs.db
 # Environment files
 .env
 deploy/control-plane/.env
+deploy/gpu-node/.env
+deploy/envs/**/*.env
 *.env.local
 
 # Dependency directories

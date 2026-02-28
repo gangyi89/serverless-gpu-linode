@@ -1,0 +1,112 @@
+services:
+  nats:
+    image: nats:latest
+    command: ["-js", "-m", "8222"]
+    ports:
+      - "4222:4222"
+      - "8222:8222"
+
+  orchestrator:
+    image: "${ORCHESTRATOR_IMAGE}"
+    environment:
+      NATS_URL: "nats://nats:4222"
+      NATS_STREAM: "GPU_JOBS"
+      NATS_CONSUMER: "gpu-workers"
+      LINODE_TOKEN: "${LINODE_TOKEN}"
+      LINODE_TYPE: "${LINODE_TYPE}"
+      LINODE_ROOT_PASS: "${LINODE_ROOT_PASS}"
+      LINODE_MANAGED_TAG: "${LINODE_MANAGED_TAG}"
+      LINODE_CLUSTER_TAG: "${LINODE_CLUSTER_TAG}"
+      GOLDEN_IMAGE_ID: "${GOLDEN_IMAGE_ID}"
+      MIN_NODES: "${MIN_NODES}"
+      MAX_NODES: "${MAX_NODES}"
+      MONITOR_INTERVAL: "${MONITOR_INTERVAL}"
+      COOLDOWN_DURATION: "${COOLDOWN_DURATION}"
+      SCALE_UP_DURATION: "${SCALE_UP_DURATION}"
+      SCALE_UP_THRESHOLD: "${SCALE_UP_THRESHOLD}"
+      SCALE_DOWN_IDLE_DURATION: "${SCALE_DOWN_IDLE_DURATION}"
+      SCALE_TO_ZERO_IDLE_DURATION: "${SCALE_TO_ZERO_IDLE_DURATION}"
+      PROMETHEUS_TARGETS_FILE: "/etc/prometheus/file_sd/gpu_targets.json"
+      LISTEN_ADDR: ":8081"
+      LOG_LEVEL: "${LOG_LEVEL}"
+    ports:
+      - "8081:8081"
+    volumes:
+      - ../control-plane/prometheus/file_sd:/etc/prometheus/file_sd
+    depends_on:
+      nats:
+        condition: service_started
+
+  nats-exporter:
+    image: natsio/prometheus-nats-exporter:latest
+    command:
+      - -varz
+      - -connz
+      - -routez
+      - -subz
+      - -jsz=all
+      - http://nats:8222
+    depends_on:
+      nats:
+        condition: service_started
+
+  prometheus:
+    image: prom/prometheus:latest
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--web.enable-lifecycle"
+    ports:
+      - "9090:9090"
+    volumes:
+      - ../control-plane/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ../control-plane/prometheus/alert_rules.yml:/etc/prometheus/alert_rules.yml:ro
+      - ../control-plane/prometheus/file_sd:/etc/prometheus/file_sd
+      - prometheus_data:/prometheus
+    depends_on:
+      orchestrator:
+        condition: service_started
+      alertmanager:
+        condition: service_started
+      nats-exporter:
+        condition: service_started
+
+  alertmanager:
+    image: prom/alertmanager:latest
+    command:
+      - "--config.file=/etc/alertmanager/alertmanager.yml"
+      - "--storage.path=/alertmanager"
+    ports:
+      - "9093:9093"
+    volumes:
+      - ../control-plane/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - alertmanager_data:/alertmanager
+    depends_on:
+      orchestrator:
+        condition: service_started
+
+  grafana:
+    image: grafana/grafana:latest
+    environment:
+      GF_SECURITY_ADMIN_USER: "${GRAFANA_ADMIN_USER}"
+      GF_SECURITY_ADMIN_PASSWORD: "${GRAFANA_ADMIN_PASSWORD}"
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ../control-plane/grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:ro
+      - ../control-plane/grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ../control-plane/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    depends_on:
+      prometheus:
+        condition: service_started
+
+volumes:
+  prometheus_data:
+  alertmanager_data:
+  grafana_data:
+
+networks:
+  default:
+    external: true
+    name: serverless-net

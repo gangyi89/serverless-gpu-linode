@@ -46,3 +46,9 @@ curl -sS "http://localhost:8081/metrics" | rg "orchestrator_queue_(pending|ack_p
 ### get the stream status
 docker run --rm --network serverless-net natsio/nats-box \             
   nats --server nats://nats:4222 stream info GPU_JOBS
+
+
+### deploy control-plane
+docker compose -f deploy/control-plane/docker-compose.yml up -d --build 
+### deploy gpu-workers
+docker compose -f deploy/gpu-node/docker-compose.yml up -d --build 

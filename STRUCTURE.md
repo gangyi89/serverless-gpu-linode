@@ -4,6 +4,7 @@
 serverless-gpu/
 ├── README.md
 ├── STRUCTURE.md
+├── INTEGRATIONTEST.md
 ├── .gitignore
 │
 ├── gateway/
@@ -21,16 +22,12 @@ serverless-gpu/
 │   ├── Dockerfile
 │   ├── main.go
 │   ├── orchestrator.go
-│   ├── statemachine.go
-│   ├── statemachine_test.go
 │   ├── scaler.go
-│   ├── scaler_test.go
+│   ├── statemachine.go
 │   ├── linode.go
-│   ├── alerts.go
-│   ├── alerts_test.go
 │   ├── discovery.go
-│   ├── discovery_test.go
-│   └── metrics.go
+│   ├── metrics.go
+│   └── *_test.go
 │
 ├── nats-agent/
 │   ├── go.mod
@@ -38,42 +35,60 @@ serverless-gpu/
 │   ├── Dockerfile
 │   ├── main.go
 │   ├── agent.go
-│   ├── drain.go
-│   └── agent_test.go
+│   ├── metrics.go
+│   └── *_test.go
 │
 ├── ai-processor/
 │   ├── go.mod
 │   ├── go.sum
 │   ├── Dockerfile
-│   └── main.go                           # Fake HTTP server on :8080/process
+│   └── main.go
 │
 ├── deploy/
-│   ├── control-plane/
+│   ├── control-plane/                     # Legacy/local compose entrypoint + configs
 │   │   ├── docker-compose.yml
 │   │   ├── .env.example
-│   │   ├── nats/
-│   │   │   └── nats-server.conf
+│   │   ├── alertmanager/
+│   │   │   └── alertmanager.yml
 │   │   ├── prometheus/
 │   │   │   ├── prometheus.yml
 │   │   │   ├── alert_rules.yml
-│   │   │   └── gpu_targets.json
-│   │   ├── alertmanager/
-│   │   │   └── alertmanager.yml
+│   │   │   └── file_sd/gpu_targets.json
 │   │   └── grafana/
+│   │       ├── dashboards/
+│   │       │   ├── gpu-node-overview.json
+│   │       │   ├── orchestrator-overview.json
+│   │       │   └── nats-jetstream.json
 │   │       └── provisioning/
-│   │           ├── datasources/
-│   │           │   └── prometheus.yml
-│   │           └── dashboards/
-│   │               ├── dashboard.yml
-│   │               └── gpu-overview.json
-│   └── gpu-node/
-│       ├── docker-compose.yml
-│       ├── .env.example
-│       └── setup.sh
+│   │           ├── datasources/prometheus.yml
+│   │           └── dashboards/dashboard.yml
+│   │
+│   ├── gpu-node/                          # Legacy/local compose entrypoint
+│   │   ├── docker-compose.yml
+│   │   └── .env.example
+│   │
+│   ├── compose/                           # Deployment-oriented compose layout
+│   │   ├── control-plane.base.yml
+│   │   ├── control-plane.linode.yml
+│   │   ├── gpu-node.base.yml
+│   │   └── gpu-node.linode.yml
+│   │
+│   └── envs/
+│       ├── local/
+│       │   ├── control-plane.env.example
+│       │   └── gpu-node.env.example
+│       └── integration/
+│           ├── control-plane.env.example
+│           └── gpu-node.env.example
 │
 └── scripts/
-    ├── build-all.sh
+    ├── build-and-push.sh
     ├── deploy-control-plane.sh
-    ├── build-golden-image.sh
-    └── integration-test.sh
+    └── deploy-gpu-node.sh
 ```
+
+## Deployment Notes
+
+- Use `deploy/compose/*.base.yml` + `*.linode.yml` with `--env-file` from `deploy/envs/*`.
+- Build/push immutable images first, then deploy with image tags pinned in env files.
+- Keep `deploy/control-plane/docker-compose.yml` and `deploy/gpu-node/docker-compose.yml` for local/dev compatibility.
