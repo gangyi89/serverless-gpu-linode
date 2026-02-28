@@ -45,7 +45,21 @@ serverless-gpu/
 │   └── main.go
 │
 ├── deploy/
-│   ├── control-plane/                     # Legacy/local compose entrypoint + configs
+│   ├── integration/                       # Primary integration deploy entrypoint
+│   │   ├── control-plane.compose.yml
+│   │   ├── gpu-node.compose.yml
+│   │   └── env/
+│   │       ├── control-plane.env.example
+│   │       └── gpu-node.env.example
+│   │
+│   ├── local/                             # Primary local deploy entrypoint
+│   │   ├── control-plane.compose.yml
+│   │   ├── gpu-node.compose.yml
+│   │   └── env/
+│   │       ├── control-plane.env.example
+│   │       └── gpu-node.env.example
+│   │
+│   ├── control-plane/                     # Shared configs + legacy compose entrypoint
 │   │   ├── docker-compose.yml
 │   │   ├── .env.example
 │   │   ├── alertmanager/
@@ -67,7 +81,7 @@ serverless-gpu/
 │   │   ├── docker-compose.yml
 │   │   └── .env.example
 │   │
-│   ├── compose/                           # Deployment-oriented compose layout
+│   ├── compose/                           # Legacy deployment compose layout
 │   │   ├── control-plane.base.yml
 │   │   └── gpu-node.base.yml
 │   │
@@ -87,6 +101,7 @@ serverless-gpu/
 
 ## Deployment Notes
 
-- Use `deploy/compose/*.base.yml` with `--env-file` from `deploy/envs/*`.
+- Use `deploy/integration/*.compose.yml` with env files in `deploy/integration/env/`.
+- Use `deploy/local/*.compose.yml` with env files in `deploy/local/env/`.
 - Build/push immutable images first, then deploy with image tags pinned in env files.
-- Keep `deploy/control-plane/docker-compose.yml` and `deploy/gpu-node/docker-compose.yml` for local/dev compatibility.
+- Keep `deploy/control-plane/docker-compose.yml` and `deploy/gpu-node/docker-compose.yml` for compatibility during migration.

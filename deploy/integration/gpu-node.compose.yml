@@ -1,9 +1,8 @@
-# Deprecated: use deploy/local/gpu-node.compose.yml for new changes.
 services:
   nats-agent:
-    build:
-      context: ../../nats-agent
-      dockerfile: Dockerfile
+    image: "${NATS_AGENT_IMAGE}"
+    pull_policy: always
+    restart: unless-stopped
     environment:
       NATS_URL: "${NATS_URL}"
       NATS_STREAM: "${NATS_STREAM}"
@@ -26,28 +25,27 @@ services:
     depends_on:
       ai-processor:
         condition: service_started
-    restart: unless-stopped
 
   ai-processor:
-    build:
-      context: ../../ai-processor
-      dockerfile: Dockerfile
+    image: "${AI_PROCESSOR_IMAGE}"
+    pull_policy: always
+    restart: unless-stopped
     environment:
       LISTEN_ADDR: ":8080"
       PROCESS_DURATION: "${PROCESS_DURATION}"
     ports:
       - "8080:8080"
-    restart: unless-stopped
 
   dcgm-exporter:
     image: nvidia/dcgm-exporter:latest
     gpus: all
+    restart: unless-stopped
     ports:
       - "9400:9400"
-    restart: unless-stopped
 
   node-exporter:
     image: prom/node-exporter:latest
+    restart: unless-stopped
     command:
       - "--path.procfs=/host/proc"
       - "--path.sysfs=/host/sys"
@@ -59,7 +57,6 @@ services:
       - /:/rootfs:ro
     ports:
       - "9100:9100"
-    restart: unless-stopped
 
 networks:
   default:

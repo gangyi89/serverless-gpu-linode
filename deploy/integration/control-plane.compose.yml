@@ -1,4 +1,3 @@
-# Deprecated: use deploy/integration/control-plane.compose.yml for new changes.
 services:
   nats:
     image: nats:latest

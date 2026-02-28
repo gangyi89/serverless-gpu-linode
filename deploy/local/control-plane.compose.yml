@@ -1,17 +1,15 @@
-# Deprecated: use deploy/integration/control-plane.compose.yml for new changes.
 services:
   nats:
     image: nats:latest
     command: ["-js", "-m", "8222"]
-    restart: unless-stopped
     ports:
       - "4222:4222"
       - "8222:8222"
 
   orchestrator:
-    image: "${ORCHESTRATOR_IMAGE}"
-    pull_policy: always
-    restart: unless-stopped
+    build:
+      context: ../../orchestrator
+      dockerfile: Dockerfile
     environment:
       NATS_URL: "nats://nats:4222"
       NATS_STREAM: "GPU_JOBS"
@@ -32,7 +30,7 @@ services:
       SCALE_TO_ZERO_IDLE_DURATION: "${SCALE_TO_ZERO_IDLE_DURATION}"
       PROMETHEUS_TARGETS_FILE: "/etc/prometheus/file_sd/gpu_targets.json"
       LISTEN_ADDR: ":8081"
-      LOG_LEVEL: "${LOG_LEVEL}"
+      LOG_LEVEL: "DEBUG"
     ports:
       - "8081:8081"
     volumes:
@@ -43,7 +41,6 @@ services:
 
   nats-exporter:
     image: natsio/prometheus-nats-exporter:latest
-    restart: unless-stopped
     command:
       - -varz
       - -connz
@@ -57,7 +54,6 @@ services:
 
   prometheus:
     image: prom/prometheus:latest
-    restart: unless-stopped
     command:
       - "--config.file=/etc/prometheus/prometheus.yml"
       - "--storage.tsdb.path=/prometheus"
@@ -79,7 +75,6 @@ services:
 
   alertmanager:
     image: prom/alertmanager:latest
-    restart: unless-stopped
     command:
       - "--config.file=/etc/alertmanager/alertmanager.yml"
       - "--storage.path=/alertmanager"
@@ -94,10 +89,9 @@ services:
 
   grafana:
     image: grafana/grafana:latest
-    restart: unless-stopped
     environment:
-      GF_SECURITY_ADMIN_USER: "${GRAFANA_ADMIN_USER}"
-      GF_SECURITY_ADMIN_PASSWORD: "${GRAFANA_ADMIN_PASSWORD}"
+      GF_SECURITY_ADMIN_USER: "${GRAFANA_ADMIN_USER:-admin}"
+      GF_SECURITY_ADMIN_PASSWORD: "${GRAFANA_ADMIN_PASSWORD:-admin}"
     ports:
       - "3000:3000"
     volumes:

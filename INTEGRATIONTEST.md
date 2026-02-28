@@ -1,9 +1,15 @@
 ## Run integration locally
 docker network create serverless-net
 
+### 0) Prepare local env files
+```bash
+cp deploy/local/env/control-plane.env.example deploy/local/env/control-plane.env
+cp deploy/local/env/gpu-node.env.example deploy/local/env/gpu-node.env
+```
+
 ### 1) Start control-plane
 ```bash
-docker compose -f deploy/control-plane/docker-compose.yml up --build
+docker compose -f deploy/local/control-plane.compose.yml --env-file deploy/local/env/control-plane.env up --build
 ```
 
 ### 2) Check JetStream streams
@@ -53,9 +59,9 @@ docker run --rm --network serverless-net natsio/nats-box \
 
 
 ### deploy control-plane
-docker compose -f deploy/control-plane/docker-compose.yml up -d --build 
+docker compose -f deploy/local/control-plane.compose.yml --env-file deploy/local/env/control-plane.env up -d --build 
 ### deploy gpu-workers
-docker compose -f deploy/gpu-node/docker-compose.yml up -d --build 
+docker compose -f deploy/local/gpu-node.compose.yml --env-file deploy/local/env/gpu-node.env up -d --build 
 
 ### test connectivity
 docker run --rm natsio/nats-box \
@@ -77,7 +83,7 @@ If you want it to survive container restarts/redeploys:
    `deploy/control-plane/grafana/dashboards/serverless-gpu-overview.json`
 2) Restart Grafana:
 ```bash
-docker compose -f deploy/control-plane/docker-compose.yml up -d grafana
+docker compose -f deploy/local/control-plane.compose.yml --env-file deploy/local/env/control-plane.env up -d grafana
 ```
 
 Grafana provisioning will auto-load dashboard files from `deploy/control-plane/grafana/dashboards`.
