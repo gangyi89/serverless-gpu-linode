@@ -1,6 +1,8 @@
 services:
   nats-agent:
     image: "${NATS_AGENT_IMAGE}"
+    pull_policy: always
+    restart: unless-stopped
     environment:
       NATS_URL: "${NATS_URL}"
       NATS_STREAM: "${NATS_STREAM}"
@@ -26,6 +28,8 @@ services:
 
   ai-processor:
     image: "${AI_PROCESSOR_IMAGE}"
+    pull_policy: always
+    restart: unless-stopped
     environment:
       LISTEN_ADDR: ":8080"
       PROCESS_DURATION: "${PROCESS_DURATION}"
@@ -35,11 +39,13 @@ services:
   dcgm-exporter:
     image: nvidia/dcgm-exporter:latest
     gpus: all
+    restart: unless-stopped
     ports:
       - "9400:9400"
 
   node-exporter:
     image: prom/node-exporter:latest
+    restart: unless-stopped
     command:
       - "--path.procfs=/host/proc"
       - "--path.sysfs=/host/sys"

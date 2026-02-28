@@ -12,7 +12,6 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 docker compose \
   -f "${ROOT_DIR}/deploy/compose/gpu-node.base.yml" \
-  -f "${ROOT_DIR}/deploy/compose/gpu-node.linode.yml" \
   --env-file "${ROOT_DIR}/${ENV_FILE}" \
   up -d
 

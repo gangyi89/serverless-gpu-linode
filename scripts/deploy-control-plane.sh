@@ -12,7 +12,6 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 docker compose \
   -f "${ROOT_DIR}/deploy/compose/control-plane.base.yml" \
-  -f "${ROOT_DIR}/deploy/compose/control-plane.linode.yml" \
   --env-file "${ROOT_DIR}/${ENV_FILE}" \
   up -d
 

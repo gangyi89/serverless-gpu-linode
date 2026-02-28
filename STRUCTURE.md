@@ -69,9 +69,7 @@ serverless-gpu/
 │   │
 │   ├── compose/                           # Deployment-oriented compose layout
 │   │   ├── control-plane.base.yml
-│   │   ├── control-plane.linode.yml
-│   │   ├── gpu-node.base.yml
-│   │   └── gpu-node.linode.yml
+│   │   └── gpu-node.base.yml
 │   │
 │   └── envs/
 │       ├── local/
@@ -89,6 +87,6 @@ serverless-gpu/
 
 ## Deployment Notes
 
-- Use `deploy/compose/*.base.yml` + `*.linode.yml` with `--env-file` from `deploy/envs/*`.
+- Use `deploy/compose/*.base.yml` with `--env-file` from `deploy/envs/*`.
 - Build/push immutable images first, then deploy with image tags pinned in env files.
 - Keep `deploy/control-plane/docker-compose.yml` and `deploy/gpu-node/docker-compose.yml` for local/dev compatibility.
