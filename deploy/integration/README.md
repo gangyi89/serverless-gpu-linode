@@ -14,6 +14,8 @@ Use this folder for Linode or remote integration deployment.
 cp deploy/integration/env/control-plane.env.example deploy/integration/env/control-plane.env
 cp deploy/integration/env/gpu-node.env.example deploy/integration/env/gpu-node.env
 
+docker network create serverless-net || true
+
 ./scripts/deploy-control-plane.sh deploy/integration/env/control-plane.env
 ./scripts/deploy-gpu-node.sh deploy/integration/env/gpu-node.env
 ```

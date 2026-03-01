@@ -79,6 +79,12 @@ cp deploy/integration/env/control-plane.env.example deploy/integration/env/contr
 cp deploy/integration/env/gpu-node.env.example deploy/integration/env/gpu-node.env
 ```
 
+Create shared Docker network on each integration host (once per host):
+
+```bash
+docker network create serverless-net || true
+```
+
 Deploy control-plane server:
 
 ```bash
