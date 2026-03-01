@@ -71,23 +71,7 @@ services:
     depends_on:
       orchestrator:
         condition: service_started
-      alertmanager:
-        condition: service_started
       nats-exporter:
-        condition: service_started
-
-  alertmanager:
-    image: prom/alertmanager:latest
-    command:
-      - "--config.file=/etc/alertmanager/alertmanager.yml"
-      - "--storage.path=/alertmanager"
-    ports:
-      - "9093:9093"
-    volumes:
-      - ../shared/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
-      - alertmanager_data:/alertmanager
-    depends_on:
-      orchestrator:
         condition: service_started
 
   grafana:
@@ -108,7 +92,6 @@ services:
 
 volumes:
   prometheus_data:
-  alertmanager_data:
   grafana_data:
 
 networks:

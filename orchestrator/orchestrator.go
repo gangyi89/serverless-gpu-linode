@@ -106,7 +106,7 @@ func (o *Orchestrator) Run(ctx context.Context) error {
 		slog.Warn("failed to write initial targets file", "error", err)
 	}
 
-	// Start HTTP server for /alerts and /metrics
+	// Start HTTP server for /metrics and /health
 	go o.startHTTPServer()
 
 	// Start monitoring loop (blocks until ctx is done)
@@ -486,11 +486,9 @@ func (o *Orchestrator) getQueueStats() (QueueStats, error) {
 	}, nil
 }
 
-// startHTTPServer starts the HTTP server for alerts webhook, metrics, and health check.
+// startHTTPServer starts the HTTP server for metrics and health check.
 func (o *Orchestrator) startHTTPServer() {
 	mux := http.NewServeMux()
-
-	mux.HandleFunc("/alerts", o.HandleAlerts)
 	mux.Handle("/metrics", promhttp.HandlerFor(o.metrics.Registry, promhttp.HandlerOpts{}))
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
