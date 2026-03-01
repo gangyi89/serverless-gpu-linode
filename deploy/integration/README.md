@@ -20,3 +20,10 @@ docker network create serverless-net || true
 ./scripts/deploy-control-plane.sh deploy/integration/env/control-plane.env
 ./scripts/deploy-gpu-node.sh deploy/integration/env/gpu-node.env
 ```
+
+## Port Exposure Defaults
+
+- `nats` and `orchestrator` are internal-only in integration (not published on host interfaces).
+- `prometheus` (`9090`) is internal-only (reachable by containers on `serverless-net`).
+- `grafana` (`3000`) is externally published for operator access.
+- `GRAFANA_BIND_HOST` controls where Grafana binds (default `0.0.0.0` for external access).

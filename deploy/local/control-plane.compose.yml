@@ -2,9 +2,6 @@ services:
   nats:
     image: nats:latest
     command: ["-js", "-m", "8222"]
-    ports:
-      - "4222:4222"
-      - "8222:8222"
 
   orchestrator:
     build:
@@ -34,8 +31,6 @@ services:
       PROMETHEUS_TARGETS_FILE: "/etc/prometheus/file_sd/gpu_targets.json"
       LISTEN_ADDR: ":8081"
       LOG_LEVEL: "DEBUG"
-    ports:
-      - "8081:8081"
     volumes:
       - ../shared/prometheus/file_sd:/etc/prometheus/file_sd
     depends_on:
@@ -61,8 +56,6 @@ services:
       - "--config.file=/etc/prometheus/prometheus.yml"
       - "--storage.tsdb.path=/prometheus"
       - "--web.enable-lifecycle"
-    ports:
-      - "9090:9090"
     volumes:
       - ../shared/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - ../shared/prometheus/alert_rules.yml:/etc/prometheus/alert_rules.yml:ro
