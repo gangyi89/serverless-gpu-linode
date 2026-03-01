@@ -30,19 +30,31 @@ docker run --rm --network serverless-net natsio/nats-box \
   nats --server nats://nats:4222 stream add GPU_JOBS --subjects GPU_JOBS --storage file --retention work --defaults
 ```
 
-### 5) Publish one test message
+### 5) Submit one test job via API
+```bash
+curl -sS -X POST "http://localhost:8080/v1/jobs" \
+  -H "Content-Type: application/json" \
+  -d '{"prompt":"hello world","jobId":"123"}' | jq
+```
+
+### 6) Open Swagger UI
+```bash
+open "http://localhost:8080/docs"
+```
+
+### 7) (Optional) Publish one test message directly to NATS
 ```bash
 docker run --rm --network serverless-net natsio/nats-box \
   nats --server nats://nats:4222 pub GPU_JOBS '{"job_id":"test-1","prompt":"hello"}'
 ```
 
-### 6) Check current queue depth
+### 8) Check current queue depth
 ```bash
 curl -sS "http://localhost:8222/jsz?streams=true" \
 | jq '[.account_details[].stream_detail[] | select(.name=="GPU_JOBS") | .state.messages][0] // 0'
 ```
 
-### 7) Check pending vs acks pending vs total (from orchestrator)
+### 9) Check pending vs acks pending vs total (from orchestrator)
 ```bash
 curl -sS "http://localhost:8081/metrics" | rg "orchestrator_queue_(pending|ack_pending|depth)"
 ```

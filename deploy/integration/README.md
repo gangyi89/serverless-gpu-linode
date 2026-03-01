@@ -24,6 +24,7 @@ docker network create serverless-net || true
 ## Port Exposure Defaults
 
 - `nats` and `orchestrator` are internal-only in integration (not published on host interfaces).
+- `api` (`8080`) is externally published; it serves Swagger UI at `/docs`.
 - `prometheus` (`9090`) is internal-only (reachable by containers on `serverless-net`).
 - `grafana` (`3000`) is externally published for operator access.
 - `GRAFANA_BIND_HOST` controls where Grafana binds (default `0.0.0.0` for external access).

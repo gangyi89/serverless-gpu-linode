@@ -21,5 +21,6 @@ docker compose -p gpu-node -f deploy/local/gpu-node.compose.yml --env-file deplo
 ## Port Exposure Defaults
 
 - `nats`, `orchestrator`, and `prometheus` are internal-only (no host-published ports).
+- `api` is externally published on `8080` (configurable via `API_BIND_HOST`) and serves Swagger UI at `/docs`.
 - `grafana` is externally published on `3000` for operator access.
 - `GRAFANA_BIND_HOST` controls Grafana host binding (default `0.0.0.0`).

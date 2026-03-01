@@ -15,13 +15,14 @@ import (
 // Config holds the orchestrator configuration loaded from environment variables.
 type Config struct {
 	// NATS connection
-	NatsURL      string
-	StreamName   string
-	ConsumerName string
-	Subject      string
-	DLQStream    string
-	DLQSubject   string
-	ConsumerAckWait   time.Duration
+	NatsURL            string
+	NatsName           string
+	StreamName         string
+	ConsumerName       string
+	Subject            string
+	DLQStream          string
+	DLQSubject         string
+	ConsumerAckWait    time.Duration
 	ConsumerMaxDeliver int
 
 	// Linode node identity tags
@@ -29,11 +30,11 @@ type Config struct {
 	LinodeClusterTag string
 
 	// Scaling thresholds
-	MinNodes         int
-	MaxNodes         int
-	ScaleUpThreshold int           // pending messages for 1→2
-	ScaleUpDuration  time.Duration // how long threshold must be exceeded
-	CooldownDuration time.Duration // minimum interval between scale events
+	MinNodes                int
+	MaxNodes                int
+	ScaleUpThreshold        int           // pending messages for 1→2
+	ScaleUpDuration         time.Duration // how long threshold must be exceeded
+	CooldownDuration        time.Duration // minimum interval between scale events
 	ScaleDownIdleDuration   time.Duration // idle time required for 2→1
 	ScaleToZeroIdleDuration time.Duration // idle time required for 1→0
 
@@ -150,6 +151,7 @@ func (o *Orchestrator) connectNATS() error {
 	slog.Info("connecting to NATS", "url", o.cfg.NatsURL)
 
 	nc, err := nats.Connect(o.cfg.NatsURL,
+		nats.Name(o.cfg.NatsName),
 		nats.RetryOnFailedConnect(true),
 		nats.MaxReconnects(-1),
 		nats.ReconnectWait(2*time.Second),
