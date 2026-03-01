@@ -23,6 +23,7 @@ Data path for one job:
 3. Decide `Ack`/`Nak`/DLQ action based on outcome.
 
 The orchestrator controls node lifecycle separately.
+The orchestrator also owns durable consumer creation/configuration.
 
 ## Processing Model (Simple)
 
@@ -57,13 +58,15 @@ Implications:
 
 ### Transient failures (retry)
 
-- Network error, timeout, connection refused, HTTP `5xx` -> `Nak()` for redelivery.
+- Network error, timeout, connection refused, HTTP `5xx` -> retry **locally on the same message** with backoff.
+- The agent does not requeue between attempts; it keeps message ownership and uses `InProgress()` heartbeats.
+- If local retries are exhausted, publish to DLQ and `Ack()` original.
 
 ### Non-retryable failures (send to DLQ)
 
 - Invalid payload format.
 - AI returns HTTP `4xx` for request-level errors.
-- Retries exhausted (`NumDelivered >= MAX_DELIVER`).
+- Local retries exhausted (`attempts >= MAX_DELIVER`).
 
 Action for non-retryable path:
 
@@ -95,12 +98,20 @@ Default DLQ subject convention:
 - `MaxDeliver` bounded (for example, 5-10).
 - Pull-based consumption preferred for explicit backpressure control.
 
+### Durable Consumer Ownership
+
+- The durable consumer is created/updated by the **orchestrator** at startup.
+- `nats-agent` runs in **bind-only** mode (`Bind(stream, consumer)`).
+- If the consumer is missing, `nats-agent` fails fast instead of creating or mutating consumer config.
+- `ACK_WAIT` stays on control-plane as consumer config.
+- `HEARTBEAT_INTERVAL` is an agent-local setting used for `InProgress()` heartbeats and should be lower than consumer `ACK_WAIT`.
+
 ### Design Decision: Option A
 
 This agent uses **ack-after-completion** semantics.
 
 - A message is considered done only when AI processing is done.
-- If a job runs longer than `ACK_WAIT`, the agent periodically sends `InProgress()` to extend the ack window.
+- If a job runs longer than consumer `ACK_WAIT`, the agent periodically sends `InProgress()` using `HEARTBEAT_INTERVAL` to extend the ack window.
 - `HTTP_TIMEOUT` must be set high enough to cover expected processing time.
 - For strict "1 node = 1 concurrent job", set `MAX_INFLIGHT=1`.
 
@@ -112,12 +123,11 @@ Suggested environment variables:
 - `NATS_STREAM`
 - `NATS_SUBJECT`
 - `NATS_CONSUMER`
-- `NATS_QUEUE_GROUP`
 - `NATS_DLQ_SUBJECT`
 - `AI_ENDPOINT`
 - `HTTP_TIMEOUT`
 - `MAX_INFLIGHT`
-- `ACK_WAIT`
+- `HEARTBEAT_INTERVAL`
 - `MAX_DELIVER`
 - `METRICS_ADDR`
 

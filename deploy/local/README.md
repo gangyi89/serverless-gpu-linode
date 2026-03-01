@@ -14,6 +14,6 @@ Use this folder for local development workflows.
 cp deploy/local/env/control-plane.env.example deploy/local/env/control-plane.env
 cp deploy/local/env/gpu-node.env.example deploy/local/env/gpu-node.env
 
-docker compose -f deploy/local/control-plane.compose.yml --env-file deploy/local/env/control-plane.env up -d --build
-docker compose -f deploy/local/gpu-node.compose.yml --env-file deploy/local/env/gpu-node.env up -d --build
+docker compose -p control-plane -f deploy/local/control-plane.compose.yml --env-file deploy/local/env/control-plane.env up -d --build
+docker compose -p gpu-node -f deploy/local/gpu-node.compose.yml --env-file deploy/local/env/gpu-node.env up -d --build
 ```

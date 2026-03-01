@@ -21,9 +21,9 @@ func main() {
 		"stream", cfg.StreamName,
 		"subject", cfg.Subject,
 		"consumer", cfg.ConsumerName,
-		"queue_group", cfg.QueueGroup,
 		"dlq_subject", cfg.DLQSubject,
 		"ai_endpoint", cfg.AIEndpoint,
+		"heartbeat_interval", cfg.HeartbeatInterval,
 		"metrics_addr", cfg.MetricsAddr,
 	)
 
@@ -41,20 +41,25 @@ func main() {
 func loadConfig() Config {
 	subject := envOrDefault("NATS_SUBJECT", envOrDefault("NATS_STREAM", "GPU_JOBS"))
 	dlqSubject := envOrDefault("NATS_DLQ_SUBJECT", subject+".DLQ")
+	heartbeatInterval := envOrDefaultDuration("HEARTBEAT_INTERVAL", 30*time.Second)
+	if os.Getenv("HEARTBEAT_INTERVAL") == "" && os.Getenv("ACK_WAIT") != "" {
+		// Backward-compatibility: accept older ACK_WAIT env as heartbeat interval.
+		heartbeatInterval = envOrDefaultDuration("ACK_WAIT", 30*time.Second)
+		slog.Warn("ACK_WAIT is deprecated for nats-agent; use HEARTBEAT_INTERVAL")
+	}
 
 	return Config{
 		NatsURL:      envOrDefault("NATS_URL", "nats://localhost:4222"),
 		StreamName:   envOrDefault("NATS_STREAM", "GPU_JOBS"),
 		Subject:      subject,
 		ConsumerName: envOrDefault("NATS_CONSUMER", "gpu-workers"),
-		QueueGroup:   envOrDefault("NATS_QUEUE_GROUP", "gpu-workers"),
 		DLQSubject:   dlqSubject,
 		DLQStream:    envOrDefault("NATS_DLQ_STREAM", "GPU_JOBS_DLQ"),
 
 		AIEndpoint:   envOrDefault("AI_ENDPOINT", "http://ai-processor:8080/process"),
 		HTTPTimeout:  envOrDefaultDuration("HTTP_TIMEOUT", 15*time.Minute),
 		MaxInFlight:  envOrDefaultInt("MAX_INFLIGHT", 4),
-		AckWait:      envOrDefaultDuration("ACK_WAIT", 20*time.Minute),
+		HeartbeatInterval: heartbeatInterval,
 		MaxDeliver:   envOrDefaultInt("MAX_DELIVER", 5),
 		RetryDelay:   envOrDefaultDuration("RETRY_DELAY", 5*time.Second),
 		DrainTimeout: envOrDefaultDuration("DRAIN_TIMEOUT", 20*time.Second),

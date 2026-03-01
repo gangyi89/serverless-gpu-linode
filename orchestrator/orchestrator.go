@@ -18,8 +18,11 @@ type Config struct {
 	NatsURL      string
 	StreamName   string
 	ConsumerName string
+	Subject      string
 	DLQStream    string
 	DLQSubject   string
+	ConsumerAckWait   time.Duration
+	ConsumerMaxDeliver int
 
 	// Linode node identity tags
 	LinodeManagedTag string
@@ -91,6 +94,7 @@ func (o *Orchestrator) Run(ctx context.Context) error {
 	if err := o.ensureJetStreamResources(); err != nil {
 		return fmt.Errorf("failed to ensure JetStream resources: %w", err)
 	}
+	o.logConsumerInfoAtStartup()
 
 	// Reconcile local state from Linode API at startup.
 	if err := o.reconcileWithCloud(ctx); err != nil {
@@ -109,6 +113,36 @@ func (o *Orchestrator) Run(ctx context.Context) error {
 	o.monitorLoop(ctx)
 
 	return nil
+}
+
+func (o *Orchestrator) logConsumerInfoAtStartup() {
+	ci, err := o.js.ConsumerInfo(o.cfg.StreamName, o.cfg.ConsumerName)
+	if err != nil {
+		slog.Warn("failed to fetch JetStream consumer info at startup",
+			"stream", o.cfg.StreamName,
+			"consumer", o.cfg.ConsumerName,
+			"error", err,
+		)
+		return
+	}
+
+	slog.Info("JetStream consumer info at startup",
+		"stream", o.cfg.StreamName,
+		"consumer", o.cfg.ConsumerName,
+		"durable", ci.Config.Durable,
+		"filter_subject", ci.Config.FilterSubject,
+		"ack_policy", ci.Config.AckPolicy.String(),
+		"ack_wait", ci.Config.AckWait,
+		"max_deliver", ci.Config.MaxDeliver,
+		"max_ack_pending", ci.Config.MaxAckPending,
+		"max_waiting", ci.Config.MaxWaiting,
+		"num_pending", ci.NumPending,
+		"num_ack_pending", ci.NumAckPending,
+		"num_redelivered", ci.NumRedelivered,
+		"num_waiting", ci.NumWaiting,
+		"delivered", ci.Delivered,
+		"ack_floor", ci.AckFloor,
+	)
 }
 
 // connectNATS establishes a connection to NATS with JetStream enabled.
@@ -149,6 +183,12 @@ func (o *Orchestrator) ensureJetStreamResources() error {
 	if o.cfg.StreamName == "" {
 		return fmt.Errorf("stream name is required")
 	}
+	if o.cfg.Subject == "" {
+		return fmt.Errorf("subject is required")
+	}
+	if o.cfg.ConsumerName == "" {
+		return fmt.Errorf("consumer name is required")
+	}
 	if o.cfg.DLQStream == "" {
 		return fmt.Errorf("dlq stream name is required")
 	}
@@ -156,10 +196,13 @@ func (o *Orchestrator) ensureJetStreamResources() error {
 		return fmt.Errorf("dlq subject is required")
 	}
 
-	if err := o.ensureStream(o.cfg.StreamName, []string{o.cfg.StreamName}, nats.WorkQueuePolicy); err != nil {
+	if err := o.ensureStream(o.cfg.StreamName, []string{o.cfg.Subject}, nats.WorkQueuePolicy); err != nil {
 		return err
 	}
-	return o.ensureStream(o.cfg.DLQStream, []string{o.cfg.DLQSubject}, nats.LimitsPolicy)
+	if err := o.ensureStream(o.cfg.DLQStream, []string{o.cfg.DLQSubject}, nats.LimitsPolicy); err != nil {
+		return err
+	}
+	return o.ensureConsumer()
 }
 
 func (o *Orchestrator) ensureStream(name string, subjects []string, retention nats.RetentionPolicy) error {
@@ -219,6 +262,69 @@ func sameSubjects(a, b []string) bool {
 		}
 	}
 	return true
+}
+
+func (o *Orchestrator) desiredConsumerConfig() *nats.ConsumerConfig {
+	return &nats.ConsumerConfig{
+		Durable:       o.cfg.ConsumerName,
+		AckPolicy:     nats.AckExplicitPolicy,
+		AckWait:       o.cfg.ConsumerAckWait,
+		MaxDeliver:    o.cfg.ConsumerMaxDeliver,
+		FilterSubject: o.cfg.Subject,
+	}
+}
+
+func (o *Orchestrator) ensureConsumer() error {
+	desired := o.desiredConsumerConfig()
+
+	if ci, err := o.js.ConsumerInfo(o.cfg.StreamName, o.cfg.ConsumerName); err == nil {
+		current := ci.Config
+		needsUpdate := current.AckPolicy != desired.AckPolicy ||
+			current.AckWait != desired.AckWait ||
+			current.MaxDeliver != desired.MaxDeliver ||
+			current.FilterSubject != desired.FilterSubject
+		if !needsUpdate {
+			slog.Info("JetStream consumer already exists", "stream", o.cfg.StreamName, "consumer", o.cfg.ConsumerName)
+			return nil
+		}
+
+		slog.Info("JetStream consumer exists with different config, updating",
+			"stream", o.cfg.StreamName,
+			"consumer", o.cfg.ConsumerName,
+			"old_ack_wait", current.AckWait,
+			"new_ack_wait", desired.AckWait,
+			"old_max_deliver", current.MaxDeliver,
+			"new_max_deliver", desired.MaxDeliver,
+			"old_filter_subject", current.FilterSubject,
+			"new_filter_subject", desired.FilterSubject,
+		)
+
+		if _, updateErr := o.js.UpdateConsumer(o.cfg.StreamName, desired); updateErr != nil {
+			return fmt.Errorf("update consumer %q: %w", o.cfg.ConsumerName, updateErr)
+		}
+		return nil
+	}
+
+	slog.Info("JetStream consumer missing, creating",
+		"stream", o.cfg.StreamName,
+		"consumer", o.cfg.ConsumerName,
+		"filter_subject", desired.FilterSubject,
+		"ack_wait", desired.AckWait,
+		"max_deliver", desired.MaxDeliver,
+	)
+	_, err := o.js.AddConsumer(o.cfg.StreamName, desired)
+	if err == nil {
+		slog.Info("JetStream consumer created", "stream", o.cfg.StreamName, "consumer", o.cfg.ConsumerName)
+		return nil
+	}
+
+	// Handle startup races where another instance creates the consumer first.
+	if _, infoErr := o.js.ConsumerInfo(o.cfg.StreamName, o.cfg.ConsumerName); infoErr == nil {
+		slog.Info("JetStream consumer became available during create", "stream", o.cfg.StreamName, "consumer", o.cfg.ConsumerName)
+		return nil
+	}
+
+	return fmt.Errorf("create consumer %q: %w", o.cfg.ConsumerName, err)
 }
 
 // monitorLoop periodically checks NATS queue depth and evaluates scale-up conditions.

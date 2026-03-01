@@ -7,6 +7,7 @@ Use this folder for Linode or remote integration deployment.
 - `control-plane.compose.yml`: control-plane services using prebuilt images.
 - `gpu-node.compose.yml`: GPU node services using prebuilt images.
 - `env/*.env.example`: templates for runtime env files.
+- Orchestrator owns durable consumer settings (`NATS_SUBJECT`, `ACK_WAIT`, `MAX_DELIVER`) on control-plane.
 
 ## Quick Start
 

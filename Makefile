@@ -54,18 +54,18 @@ local-network:
 # Local deployment
 # ------------------------------------------------------------------------------
 local-up-control-plane: local-network
-	docker compose -f deploy/local/control-plane.compose.yml --env-file $(LOCAL_CONTROL_PLANE_ENV) up -d --build
+	docker compose -p control-plane -f deploy/local/control-plane.compose.yml --env-file $(LOCAL_CONTROL_PLANE_ENV) up -d --build
 
 local-up-gpu-node: local-network
-	docker compose -f deploy/local/gpu-node.compose.yml --env-file $(LOCAL_GPU_NODE_ENV) up -d --build
+	docker compose -p gpu-node -f deploy/local/gpu-node.compose.yml --env-file $(LOCAL_GPU_NODE_ENV) up -d --build
 
 local-up: local-up-control-plane local-up-gpu-node
 
 local-down-control-plane:
-	docker compose -f deploy/local/control-plane.compose.yml --env-file $(LOCAL_CONTROL_PLANE_ENV) down
+	docker compose -p control-plane -f deploy/local/control-plane.compose.yml --env-file $(LOCAL_CONTROL_PLANE_ENV) down
 
 local-down-gpu-node:
-	docker compose -f deploy/local/gpu-node.compose.yml --env-file $(LOCAL_GPU_NODE_ENV) down
+	docker compose -p gpu-node -f deploy/local/gpu-node.compose.yml --env-file $(LOCAL_GPU_NODE_ENV) down
 
 local-down: local-down-gpu-node local-down-control-plane
 

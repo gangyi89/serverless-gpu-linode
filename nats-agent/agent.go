@@ -24,14 +24,13 @@ type Config struct {
 	StreamName   string
 	Subject      string
 	ConsumerName string
-	QueueGroup   string
 	DLQSubject   string
 	DLQStream    string
 
 	AIEndpoint   string
 	HTTPTimeout  time.Duration
 	MaxInFlight  int
-	AckWait      time.Duration
+	HeartbeatInterval time.Duration
 	MaxDeliver   int
 	RetryDelay   time.Duration
 	DrainTimeout time.Duration
@@ -50,6 +49,7 @@ type Agent struct {
 
 	wg       sync.WaitGroup
 	inflight chan struct{}
+	heartbeatInterval time.Duration
 
 	shuttingDown atomic.Bool
 }
@@ -73,8 +73,9 @@ func NewAgent(cfg Config) *Agent {
 		httpClient: &http.Client{
 			Timeout: cfg.HTTPTimeout,
 		},
-		metrics:  NewMetrics(),
-		inflight: make(chan struct{}, maxInFlight),
+		metrics:           NewMetrics(),
+		inflight:          make(chan struct{}, maxInFlight),
+		heartbeatInterval: cfg.HeartbeatInterval,
 	}
 }
 
@@ -172,21 +173,44 @@ func (a *Agent) subscribe() error {
 	sub, err := a.js.PullSubscribe(
 		a.cfg.Subject,
 		a.cfg.ConsumerName,
-		nats.BindStream(a.cfg.StreamName),
+		nats.Bind(a.cfg.StreamName, a.cfg.ConsumerName),
 		nats.ManualAck(),
-		nats.AckWait(a.cfg.AckWait),
-		nats.MaxDeliver(a.cfg.MaxDeliver),
 	)
 	if err != nil {
+		slog.Error("failed to bind to consumer",
+			"stream", a.cfg.StreamName,
+			"consumer", a.cfg.ConsumerName,
+			"subject", a.cfg.Subject,
+			"error", err,
+		)
 		return err
 	}
 	a.sub = sub
+
+	// Heartbeat must be shorter than consumer AckWait so ownership is retained.
+	if ci, infoErr := a.js.ConsumerInfo(a.cfg.StreamName, a.cfg.ConsumerName); infoErr == nil {
+		ackWait := ci.Config.AckWait
+		if ackWait > 0 && a.heartbeatInterval >= ackWait {
+			adjusted := ackWait / 3
+			if adjusted < 1*time.Second {
+				adjusted = 1 * time.Second
+			}
+			slog.Warn("heartbeat interval is >= consumer ack_wait; auto-adjusting",
+				"heartbeat_interval", a.heartbeatInterval,
+				"consumer_ack_wait", ackWait,
+				"adjusted_heartbeat_interval", adjusted,
+			)
+			a.heartbeatInterval = adjusted
+		}
+	}
+
 	slog.Info("subscribed to jobs",
 		"stream", a.cfg.StreamName,
 		"subject", a.cfg.Subject,
 		"consumer", a.cfg.ConsumerName,
 		"mode", "pull",
 		"max_inflight", cap(a.inflight),
+		"heartbeat_interval", a.heartbeatInterval,
 	)
 	return nil
 }
@@ -279,81 +303,109 @@ func (a *Agent) processMessage(msg *nats.Msg) {
 	stopHeartbeat := a.startAckProgressHeartbeat(msg, delivered)
 	defer stopHeartbeat()
 
-	slog.Debug("forwarding message to ai endpoint",
-		"ai_endpoint", a.cfg.AIEndpoint,
-		"subject", msg.Subject,
-		"num_delivered", delivered,
-	)
-	respStatus, respBody, err := a.forwardToAI(msg.Data)
-	latency := time.Since(start)
-	a.metrics.ForwardLatency.Observe(latency.Seconds())
-	slog.Debug("forward attempt completed",
-		"subject", msg.Subject,
-		"num_delivered", delivered,
-		"http_status", respStatus,
-		"latency_ms", latency.Milliseconds(),
-		"error", err,
-	)
-	if err == nil && respStatus >= http.StatusOK && respStatus < http.StatusMultipleChoices {
-		a.metrics.LastSuccessUnix.SetToCurrentTime()
-		if ackErr := msg.Ack(); ackErr != nil {
-			slog.Error("failed to ack message", "error", ackErr)
-			return
-		}
-		a.metrics.MessagesAcked.Inc()
-		slog.Debug("message acked after successful forward",
+	maxAttempts := a.cfg.MaxDeliver
+	if maxAttempts <= 0 {
+		maxAttempts = 1
+	}
+
+	lastReason := "unknown_failure"
+	lastStatus := 0
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		slog.Debug("forwarding message to ai endpoint",
+			"ai_endpoint", a.cfg.AIEndpoint,
 			"subject", msg.Subject,
 			"num_delivered", delivered,
+			"attempt", attempt,
+			"max_attempts", maxAttempts,
+		)
+
+		respStatus, respBody, err := a.forwardToAI(msg.Data)
+		latency := time.Since(start)
+		start = time.Now()
+		a.metrics.ForwardLatency.Observe(latency.Seconds())
+		slog.Debug("forward attempt completed",
+			"subject", msg.Subject,
+			"num_delivered", delivered,
+			"attempt", attempt,
+			"max_attempts", maxAttempts,
 			"http_status", respStatus,
+			"latency_ms", latency.Milliseconds(),
+			"error", err,
 		)
-		return
-	}
-
-	a.metrics.ForwardFailures.Inc()
-	a.metrics.LastFailureUnix.SetToCurrentTime()
-
-	reason := buildFailureReason(respStatus, respBody, err)
-	nonRetryable := isNonRetryableStatus(respStatus) || isRetryExhausted(delivered, a.cfg.MaxDeliver)
-	if nonRetryable {
-		slog.Debug("message considered non-retryable, sending to dlq",
-			"subject", msg.Subject,
-			"num_delivered", delivered,
-			"reason", reason,
-			"http_status", respStatus,
-			"max_deliver", a.cfg.MaxDeliver,
-		)
-		if dlqErr := a.publishToDLQ(msg, delivered, reason); dlqErr != nil {
-			slog.Error("failed to publish to dlq", "error", dlqErr)
-			_ = a.nak(msg)
-			a.metrics.MessagesNacked.Inc()
+		if err == nil && respStatus >= http.StatusOK && respStatus < http.StatusMultipleChoices {
+			a.metrics.LastSuccessUnix.SetToCurrentTime()
+			if ackErr := msg.Ack(); ackErr != nil {
+				slog.Error("failed to ack message", "error", ackErr)
+				return
+			}
+			a.metrics.MessagesAcked.Inc()
+			slog.Debug("message acked after successful forward",
+				"subject", msg.Subject,
+				"num_delivered", delivered,
+				"attempt", attempt,
+				"http_status", respStatus,
+			)
 			return
 		}
-		a.metrics.MessagesDLQ.Inc()
-		if ackErr := msg.Ack(); ackErr != nil {
-			slog.Error("failed to ack dlq'd message", "error", ackErr)
-			return
+
+		a.metrics.ForwardFailures.Inc()
+		a.metrics.LastFailureUnix.SetToCurrentTime()
+
+		lastStatus = respStatus
+		lastReason = buildFailureReason(respStatus, respBody, err)
+		if isNonRetryableStatus(respStatus) {
+			slog.Debug("message considered non-retryable, sending to dlq",
+				"subject", msg.Subject,
+				"num_delivered", delivered,
+				"attempt", attempt,
+				"reason", lastReason,
+				"http_status", respStatus,
+			)
+			break
 		}
-		a.metrics.MessagesAcked.Inc()
-		slog.Debug("message moved to dlq and acked",
-			"subject", msg.Subject,
+		if attempt >= maxAttempts {
+			slog.Debug("local retries exhausted, sending to dlq",
+				"subject", msg.Subject,
+				"num_delivered", delivered,
+				"reason", lastReason,
+				"http_status", respStatus,
+				"max_attempts", maxAttempts,
+			)
+			break
+		}
+
+		slog.Warn("forward failed, retrying locally",
+			"reason", lastReason,
 			"num_delivered", delivered,
+			"attempt", attempt,
+			"next_attempt", attempt+1,
+			"max_attempts", maxAttempts,
+			"retry_delay", a.cfg.RetryDelay,
 		)
-		return
+		if a.cfg.RetryDelay > 0 {
+			time.Sleep(a.cfg.RetryDelay)
+		}
 	}
 
-	slog.Warn("forward failed, retrying",
-		"reason", reason,
-		"num_delivered", delivered,
-	)
-	if nakErr := a.nak(msg); nakErr != nil {
-		slog.Error("failed to nak message", "error", nakErr)
+	if dlqErr := a.publishToDLQ(msg, delivered, lastReason); dlqErr != nil {
+		slog.Error("failed to publish to dlq", "error", dlqErr)
+		// Fallback: release ownership so another worker can retry if DLQ publish fails.
+		_ = a.nak(msg)
+		a.metrics.MessagesNacked.Inc()
 		return
 	}
-	a.metrics.MessagesNacked.Inc()
-	slog.Debug("message nacked for retry",
+	a.metrics.MessagesDLQ.Inc()
+	if ackErr := msg.Ack(); ackErr != nil {
+		slog.Error("failed to ack dlq'd message", "error", ackErr)
+		return
+	}
+	a.metrics.MessagesAcked.Inc()
+	slog.Debug("message moved to dlq and acked",
 		"subject", msg.Subject,
 		"num_delivered", delivered,
-		"retry_delay", a.cfg.RetryDelay,
+		"http_status", lastStatus,
+		"reason", lastReason,
+		"max_attempts", maxAttempts,
 	)
 }
 
@@ -407,7 +459,7 @@ func (a *Agent) nak(msg *nats.Msg) error {
 }
 
 func (a *Agent) startAckProgressHeartbeat(msg *nats.Msg, delivered uint64) func() {
-	interval := a.cfg.AckWait / 3
+	interval := a.heartbeatInterval
 	if interval <= 0 {
 		interval = 5 * time.Second
 	}
@@ -501,13 +553,6 @@ func (a *Agent) waitForInflight() error {
 
 func isNonRetryableStatus(status int) bool {
 	return status >= 400 && status < 500
-}
-
-func isRetryExhausted(numDelivered uint64, maxDeliver int) bool {
-	if maxDeliver <= 0 {
-		return false
-	}
-	return int(numDelivered) >= maxDeliver
 }
 
 func buildFailureReason(status int, body string, err error) string {

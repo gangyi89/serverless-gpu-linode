@@ -34,10 +34,6 @@ docker run --rm --network serverless-net natsio/nats-box \
 ```bash
 docker run --rm --network serverless-net natsio/nats-box \
   nats --server nats://nats:4222 pub GPU_JOBS '{"job_id":"test-1","prompt":"hello"}'
-
-docker run --rm --network compose_default natsio/nats-box \
-  nats --server nats://nats:4222 pub GPU_JOBS '{"job_id":"test-1","prompt":"hello"}'
-
 ```
 
 ### 6) Check current queue depth

@@ -21,7 +21,10 @@ func main() {
 	slog.Info("starting orchestrator",
 		"nats_url", cfg.NatsURL,
 		"stream", cfg.StreamName,
+		"subject", cfg.Subject,
 		"consumer", cfg.ConsumerName,
+		"consumer_ack_wait", cfg.ConsumerAckWait,
+		"consumer_max_deliver", cfg.ConsumerMaxDeliver,
 		"dlq_stream", cfg.DLQStream,
 		"dlq_subject", cfg.DLQSubject,
 		"linode_managed_tag", cfg.LinodeManagedTag,
@@ -56,9 +59,12 @@ func loadConfig() Config {
 	cfg := Config{
 		NatsURL:      envOrDefault("NATS_URL", "nats://localhost:4222"),
 		StreamName:   envOrDefault("NATS_STREAM", "GPU_JOBS"),
+		Subject:      envOrDefault("NATS_SUBJECT", envOrDefault("NATS_STREAM", "GPU_JOBS")),
 		ConsumerName: envOrDefault("NATS_CONSUMER", "gpu-workers"),
 		DLQSubject:   envOrDefault("NATS_DLQ_SUBJECT", "GPU_JOBS.DLQ"),
 		DLQStream:    envOrDefault("NATS_DLQ_STREAM", "GPU_JOBS_DLQ"),
+		ConsumerAckWait:   envOrDefaultDuration("ACK_WAIT", 20*time.Minute),
+		ConsumerMaxDeliver: envOrDefaultInt("MAX_DELIVER", 5),
 		LinodeManagedTag: envOrDefault("LINODE_MANAGED_TAG", "serverless-gpu-managed"),
 		LinodeClusterTag: envOrDefault("LINODE_CLUSTER_TAG", "serverless-gpu-default"),
 

@@ -67,6 +67,9 @@ Notes:
 
 - `make local-up` auto-creates `serverless-net` if missing.
 - Local compose files build from source.
+- Local stacks use explicit compose project names:
+  - `control-plane` for control-plane stack
+  - `gpu-node` for gpu-node stack
 
 ## 5) Integration/production deployment (separate servers)
 
@@ -101,6 +104,8 @@ Notes:
 
 - Integration compose files use prebuilt images, not local `build` contexts.
 - Ensure `NATS_URL` in `deploy/integration/env/gpu-node.env` points to your control-plane NATS endpoint.
+- Durable consumer configuration is owned by control-plane orchestrator (`NATS_SUBJECT`, `ACK_WAIT`, `MAX_DELIVER` in control-plane env).
+- `HEARTBEAT_INTERVAL` is agent-local on gpu-node and should be set lower than control-plane `ACK_WAIT`.
 - Set image vars in env files to the exact built image refs:
   - `deploy/integration/env/control-plane.env`: `ORCHESTRATOR_IMAGE=...`
   - `deploy/integration/env/gpu-node.env`: `NATS_AGENT_IMAGE=...`, `AI_PROCESSOR_IMAGE=...`
