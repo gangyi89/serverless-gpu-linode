@@ -2,6 +2,10 @@ services:
   nats:
     image: nats:latest
     command: ["-js", "-m", "8222"]
+    ports:
+      - "4222:4222"
+      #- "8222:8222" # monitoring only
+
 
   orchestrator:
     build:
@@ -31,6 +35,8 @@ services:
       PROMETHEUS_TARGETS_FILE: "/etc/prometheus/file_sd/gpu_targets.json"
       LISTEN_ADDR: ":8081"
       LOG_LEVEL: "DEBUG"
+      #ports:
+        #- "8081:8081" # metrics and health check only
     volumes:
       - ../shared/prometheus/file_sd:/etc/prometheus/file_sd
     depends_on:
