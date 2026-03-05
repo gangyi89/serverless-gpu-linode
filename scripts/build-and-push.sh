@@ -27,11 +27,13 @@ build_and_push() {
 }
 
 build_and_push "orchestrator" "orchestrator"
+build_and_push "api" "api"
 build_and_push "nats-agent" "nats-agent"
 build_and_push "ai-processor" "ai-processor"
 
 echo "Build and push complete."
 echo "Export these for deploy:"
 echo "  ORCHESTRATOR_IMAGE=${REGISTRY}/${PREFIX}orchestrator:${TAG}"
+echo "  API_IMAGE=${REGISTRY}/${PREFIX}api:${TAG}"
 echo "  NATS_AGENT_IMAGE=${REGISTRY}/${PREFIX}nats-agent:${TAG}"
 echo "  AI_PROCESSOR_IMAGE=${REGISTRY}/${PREFIX}ai-processor:${TAG}"
