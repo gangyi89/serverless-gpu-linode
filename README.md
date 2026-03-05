@@ -1,8 +1,8 @@
 # Serverless GPU Auto-Scaling on Linode — Architecture Description
 
-## 1. Problem Statement
+## 1. Overview
 
-Linode does not offer native auto-scaling for GPU VMs. The customer requires a serverless-like GPU environment that can scale from 0 to 2 GPU nodes on demand, paying only for compute time used. This document describes a custom-built solution to achieve this using an event-driven architecture with independent, single-responsibility services deployed as Docker containers.
+To build a serverless-like GPU environment that can scale from 0 to X GPU nodes on demand, paying only for compute time used. This document describes a lightweight, yet scalable solution to achieve this using an event-driven architecture with independent, single-responsibility services deployed as Docker containers.
 
 ---
 
@@ -33,15 +33,15 @@ The system follows an event-driven pattern where GPU nodes consume work directly
 
 ## Current Implementation Notes
 
-The codebase currently implements the following behavior (this section is authoritative if older sections differ):
+The current code implements the following behavior:
 
-- **NATS stream model:** `GPU_JOBS` uses JetStream `WorkQueuePolicy` (queue semantics), and `GPU_JOBS_DLQ` uses `LimitsPolicy` (retention for failed jobs).
-- **NATS agent consume model:** pull-based, slot-limited fetch. The agent fetches one message only when `acks_pending < MAX_INFLIGHT`.
-- **Ack semantics:** Option A (ack-after-completion). The agent acks only after the AI processor returns a completion `2xx` response.
-- **Long-running jobs:** the agent sends `InProgress()` heartbeats while waiting so messages are not redelivered when `ACK_WAIT` is exceeded.
-- **Scale-up signal:** orchestrator scales up from queue **pending work** (`pending + acks pending`), not pending-only.
-- **Scale-down signal:** orchestrator scales down by **request-idle time** (queue pending stays `0` for configured duration), not by GPU utilization alerts.
-- **Queue observability:** orchestrator exposes separate metrics for `pending` and `acks pending`, plus combined pending work.
+- **JetStream resources:** `GPU_JOBS` uses `WorkQueuePolicy`; `GPU_JOBS_DLQ` uses `LimitsPolicy`.
+- **Agent consumption model:** pull-based with local slot control via `MAX_INFLIGHT` (bounded concurrent processing).
+- **Ack semantics:** ack-after-completion; a message is acked only after `ai-processor` returns a `2xx`.
+- **Long-running jobs:** the agent sends `InProgress()` heartbeats to extend the ack window while processing.
+- **Scale-up signal:** orchestrator scales from queue pending work (`pending + ack_pending`).
+- **Scale-down signal:** orchestrator scales down on request-idle windows when pending work remains `0` for configured durations.
+- **Queue observability:** orchestrator exports separate `pending`, `ack_pending`, and combined pending-work metrics.
 
 ---
 
@@ -77,7 +77,7 @@ NATS is a lightweight message queue (~20MB Docker image, single binary, written 
 
 **Why NATS:** RabbitMQ and Redis are overkill for a 0–2 node system. NATS is purpose-built for this use case, has an excellent Go client, and requires near-zero configuration.
 
-### 3.3 GPU Nodes (0–2 Ephemeral Linode GPU VMs)
+### 3.3 GPU Nodes (0–X Ephemeral Linode GPU VMs)
 
 **Responsibility:** Subscribe to NATS, pull and process GPU workloads, expose metrics.
 
@@ -85,7 +85,7 @@ GPU Nodes are not permanent infrastructure. They are created and destroyed by th
 
 #### 3.3.1 Internal Container Architecture
 
-Each GPU VM runs four containers as a compose stack. In Phase 1, the model is **fire-and-forget** — once the NATS Agent delivers a message to the AI Processor, the work is considered done. No response or result delivery is required.
+Each GPU VM runs a small compose stack centered on `nats-agent` and `ai-processor`. In integration deployments, the node also runs exporters for observability (`dcgm-exporter` and `node-exporter`).
 
 ```
 ┌──────────────────────────────────────────────────────┐
@@ -96,12 +96,12 @@ Each GPU VM runs four containers as a compose stack. In Phase 1, the model is **
 │  │  NATS Client   │       │   AI Processor        │  │
 │  │  Agent         │──────▶│   Container           │  │
 │  │                │ HTTP  │                       │  │
-│  │ - Subscribe to │       │ - GPU inference/      │  │
-│  │   queue group  │       │   training workload   │  │
-│  │ - Forward to   │       │ - Exposes endpoint    │  │
-│  │   AI Processor │       │   on localhost:8080   │  │
-│  │ - Ack on send  │       │ - Knows nothing about │  │
-│  │                │       │   NATS or infra       │  │
+│  │ - Pull consumer│       │ - GPU inference/      │  │
+│  │   on JetStream │       │   training workload   │  │
+│  │ - Forward to   │       │ - Exposes /process    │  │
+│  │   AI endpoint  │       │ - Infra-agnostic      │  │
+│  │ - Ack on 2xx   │       │   workload service    │  │
+│  │ - Retry + DLQ  │       │                       │  │
 │  └────────────────┘       └───────────────────────┘  │
 │                                                      │
 │  ┌────────────────┐       ┌───────────────────────┐  │
@@ -111,84 +111,66 @@ Each GPU VM runs four containers as a compose stack. In Phase 1, the model is **
 └──────────────────────────────────────────────────────┘
 ```
 
-**NATS Client Agent (Custom Go Container):** The agent is a sidecar that bridges the NATS queue and the AI Processor. It subscribes to the NATS queue group, pulls a message, forwards the payload to the AI Processor via a local HTTP call (`POST http://ai-processor:8080/process`), and immediately acks the NATS message. In Phase 1, delivery to the AI Processor is the completion point — the agent does not wait for a processing result.
+**NATS Client Agent (Custom Go Container):** The agent bridges JetStream and the workload container. It binds to the durable consumer, fetches messages in pull mode, forwards each payload to `POST http://ai-processor:8080/process`, sends `InProgress()` heartbeats while processing, retries transient failures, and sends terminal failures to DLQ. It acks only after a successful `2xx` response from `ai-processor`.
 
-**AI Processor Container (Custom Image):** The AI Processor is a pure workload container. It exposes an HTTP endpoint, accepts a job payload, and performs GPU computation (inference, training, etc.). It has no knowledge of NATS, queues, Linode, or any infrastructure concern. This separation allows the data science team to build, test, and update the AI container independently — they only need to honor the API contract.
+**AI Processor Container (Custom Image):** The AI Processor is a pure workload service. It exposes an HTTP endpoint, accepts a job payload, and performs GPU computation (inference, training, etc.). It has no direct dependency on NATS or Linode APIs.
 
-**DCGM Exporter (`nvidia/dcgm-exporter`):** Exports NVIDIA GPU metrics (utilization, memory usage, temperature) to Prometheus.
+**DCGM Exporter (`nvidia/dcgm-exporter`):** Exports NVIDIA GPU metrics (utilization, memory usage, temperature) to Prometheus (integration stack).
 
 **Node Exporter (`prom/node-exporter`):** Exports standard system metrics (CPU, memory, disk) to Prometheus.
 
-#### 3.3.2 Docker Compose on Each GPU VM
+#### 3.3.3 NATS Message Delivery
 
-```yaml
-services:
-  nats-agent:
-    build: ./nats-agent
-    environment:
-      - NATS_URL=nats://control-plane-ip:4222
-      - AI_ENDPOINT=http://ai-processor:8080/process
-    depends_on:
-      - ai-processor
+The agent binds to a durable JetStream consumer and fetches messages in pull mode. After delivery, a message enters **ack pending** state and is not visible for redelivery unless the ack window expires or the message is negatively acknowledged.
 
-  ai-processor:
-    build: ./ai-processor
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - capabilities: [gpu]
-    ports:
-      - "8080:8080"
+Current behavior is ack-after-processing:
 
-  dcgm-exporter:
-    image: nvidia/dcgm-exporter:latest
-
-  node-exporter:
-    image: prom/node-exporter:latest
-```
-
-#### 3.3.3 NATS Message Delivery (Phase 1 — Fire-and-Forget)
-
-Once NATS delivers a message to a node's agent, that message enters an **acks pending** state and is invisible to all other consumers. There is no risk of duplicate processing across nodes. In Phase 1, the agent acks the message as soon as it successfully delivers the payload to the AI Processor's HTTP endpoint. This keeps the queue moving and the implementation simple.
-
-Future phases can introduce ack-after-completion semantics with AckWait timeouts and retry logic if guaranteed processing is required.
+- Forward payload to `POST /process` on `ai-processor`
+- Keep the message lease alive with `InProgress()` heartbeats while processing
+- Ack on successful `2xx` response
+- Retry transient failures locally
+- Publish terminal failures to DLQ and ack the original message
 
 #### 3.3.4 Event-Driven Consumption
 
-Each GPU Node's agent subscribes to the same NATS queue group. NATS distributes messages round-robin across all active subscribers. This provides load balancing across nodes with no custom logic.
+Each GPU node agent binds to the same durable consumer and requests work via pull fetch. Effective load distribution comes from independent workers fetching when they have free in-flight capacity (`MAX_INFLIGHT`), so faster or less-loaded nodes naturally consume more messages.
 
 #### 3.3.5 Graceful Drain
 
-To drain a node before termination, the agent unsubscribes from the NATS queue group. Since Phase 1 uses fire-and-forget, the agent has no in-flight work to wait on — once unsubscribed, the node can be destroyed immediately.
+On shutdown (for example SIGTERM), the agent initiates subscription drain, stops accepting new work, and waits for in-flight handlers to finish up to `DRAIN_TIMEOUT`. If shutdown starts while a message is being handled, the agent avoids taking new work and releases unfinished work back to JetStream via negative ack behavior.
+
+Current orchestrator scale-down is infrastructure-led: nodes are destroyed after idle checks, without a dedicated per-node drain handshake endpoint.
 
 #### 3.3.6 Boot Sequence
 
 1. VM boots from golden image (drivers, Docker, NVIDIA Toolkit pre-installed)
-2. Docker Compose starts all four containers
-3. AI Processor container initializes and begins listening on localhost:8080
-4. NATS Client Agent connects to NATS and subscribes to the queue group
-5. Agent begins pulling and forwarding messages to the AI Processor
-6. Prometheus discovers the node and begins scraping DCGM + Node Exporter metrics
+2. Docker Compose starts node services (`nats-agent`, `ai-processor`, and exporters)
+3. `ai-processor` starts listening on `:8080`
+4. `nats-agent` connects to NATS and binds to the durable consumer
+5. Agent begins pull-fetching jobs and forwarding them to `ai-processor`
+6. Prometheus discovers node targets and starts scraping exporter endpoints
 
 #### 3.3.7 Golden Image vs Container Images
 
-The golden image (Linode snapshot) contains only stable, slow-changing components: the OS, NVIDIA drivers, CUDA toolkit, Docker, NVIDIA Container Toolkit, and the Docker Compose file. All application logic (the NATS Agent and AI Processor) lives in container images pulled at boot time or pre-cached in the snapshot. This means the AI model and agent code can be updated by pushing new container images without rebuilding the VM snapshot.
+The golden image (Linode snapshot) should contain stable, slow-changing host dependencies: OS baseline, NVIDIA drivers, CUDA runtime/toolkit, Docker, and NVIDIA Container Toolkit. Application behavior lives in container images (`nats-agent`, `ai-processor`, and observability exporters), which are versioned and deployed independently.
+
+This separation keeps host rebuild frequency low while allowing rapid application updates via image rollout.
 
 ### 3.4 Orchestrator (Custom Go Container)
 
-**Responsibility:** Monitor queue depth, manage GPU node lifecycle via the Linode API, and maintain the scaling state machine.
+**Responsibility:** Own autoscaling decisions and managed node lifecycle.
 
-The Orchestrator is a pure infrastructure controller. It never touches request traffic. Its sole concern is ensuring the right number of GPU nodes exist for the current level of demand.
+The orchestrator is an infrastructure controller. It does not process user requests. It ensures JetStream resources exist, evaluates queue state, provisions/destroys GPU nodes through Linode, and keeps Prometheus target discovery in sync.
 
-- **Monitor NATS queue depth for scale-up** — subscribe to NATS JetStream metadata (pending message count). If pending > 0 and nodes = 0, trigger provisioning immediately (0→1). If pending > N for M minutes and nodes = 1, trigger scale-out (1→2). All scale-up decisions are made directly by the Orchestrator with no Grafana dependency.
-- **Receive Alertmanager webhooks for scale-down** — listen for GPU idle alerts (2→1 and 1→0) from Alertmanager and act on them. Scale-down is the only scaling path that depends on Grafana/Alertmanager.
-- **Linode API integration** — create GPU VMs from the golden image snapshot, poll for provisioning completion, and destroy VMs on scale-down
-- **Prometheus service discovery** — when a node is provisioned or destroyed, write an updated JSON targets file (e.g., `/etc/prometheus/gpu_targets.json`) so Prometheus automatically discovers new nodes and stops scraping destroyed ones. This is a natural extension of the Orchestrator's lifecycle management — it already knows when nodes come and go.
-- **State machine** — track node lifecycle states to prevent race conditions (see Section 4.6)
-- **Expose `/metrics`** — publish Prometheus metrics including current queue depth, node count, node states, provisioning latency, and cooldown status
-- **Cooldown logic** — enforce minimum intervals between scale events to prevent flapping
-- **Graceful drain coordination** — before destroying a node, signal it to unsubscribe from NATS, wait for acks-pending jobs to complete, then issue the destroy call
+Core responsibilities:
+
+- **JetStream ownership:** ensures jobs stream, DLQ stream, and durable consumer exist with expected config.
+- **Queue-based scaling:** evaluates `pending_work = pending + ack_pending` on each monitor tick.
+- **Node lifecycle:** creates, tracks, reconciles, and destroys Linode GPU nodes.
+- **Prometheus file SD:** rewrites GPU target file after node changes.
+- **Operational endpoints:** exposes `GET /metrics` and `GET /health`.
+
+Scaling logic details and variable definitions are documented in Section 4.
 
 ### 3.5 Monitoring Stack: Prometheus + Alertmanager + Grafana (Docker Containers)
 
@@ -204,129 +186,167 @@ The Orchestrator is a pure infrastructure controller. It never touches request t
 
 ## 4. Scaling Logic
 
-Scale-up and scale-down use different signals and owners. Scale-up is driven by **queue depth**, owned entirely by the Orchestrator — it is predictive and does not require a running GPU to measure. Scale-down is driven by **GPU idle state**, owned by Grafana/Alertmanager — the customer requires scale-down to be based on actual GPU activity, which only the DCGM Exporter on a running node can report.
+Scaling is currently fully orchestrator-driven from JetStream queue state.
 
-### 4.1 Scale 0→1 (Cold Start)
+- **Signal source:** `pending_work = num_pending + num_ack_pending`
+- **Scale-up owner:** Orchestrator
+- **Scale-down owner:** Orchestrator
+- **No Alertmanager dependency** for scaling decisions in the current implementation
 
-- **Trigger:** A request arrives when no GPU nodes exist
-- **Signal:** NATS pending message count transitions from 0 to ≥1
-- **Owner:** Orchestrator (direct monitoring, immediate decision)
-- **Mechanism:** The Orchestrator monitors NATS JetStream metadata. When pending messages appear and no nodes are in READY or PROVISIONING state, it immediately calls the Linode API to create a GPU VM from the golden image. Messages remain buffered in NATS until the node boots, subscribes, and begins consuming.
-- **Expected latency:** 2–5 minutes (VM provisioning + driver init + application start)
+### 4.1 Decision Flow
 
-Grafana is not involved in this transition. There is no GPU to measure, and the decision must be immediate.
+```text
+every MONITOR_INTERVAL:
+  reconcile managed nodes from Linode API
+  read queue stats (pending + ack_pending)
 
-### 4.2 Scale 1→2 (Horizontal Scale-Out)
+  scale-up:
+    if pending_work > 0 and active_nodes == 0:
+      scale 0 -> 1
+    else if pending_work > SCALE_UP_THRESHOLD
+         and sustained for SCALE_UP_DURATION
+         and ready_nodes == active_nodes
+         and active_nodes < MAX_NODES:
+      scale N -> N+1
 
-- **Trigger:** The existing node cannot keep up with demand
-- **Signal:** Queue depth growing beyond threshold
-- **Owner:** Orchestrator (direct monitoring)
-- **Recommended threshold:** `pending_messages > N for M minutes` (tunable)
-- **Mechanism:** The Orchestrator monitors NATS JetStream pending message count. When messages are accumulating faster than the single node can consume them, the Orchestrator checks its state machine (is a scale-up already in progress?) and, if not, provisions a second node via the Linode API.
+  scale-down:
+    if active_nodes > MIN_NODES and ready_nodes > 0 and pending_work == 0:
+      idle timer runs
+      if active_nodes > 1 and idle >= SCALE_DOWN_IDLE_DURATION:
+        scale N -> N-1
+      if active_nodes == 1 and idle >= SCALE_TO_ZERO_IDLE_DURATION:
+        scale 1 -> 0
 
-**Why queue depth for scale-up:** Queue depth is predictive — it detects demand outpacing capacity before user experience degrades. GPU utilization is reactive and lagging. An empty queue means the node is keeping up; a growing queue means it is not. This is a simpler and faster signal than waiting for GPU utilization to sustain above a threshold.
-
-### 4.3 Scale 2→1 (Scale-In)
-
-- **Trigger:** One node is idle
-- **Signal:** GPU utilization at or near zero for a sustained period
-- **Owner:** Grafana/Alertmanager → Orchestrator
-- **Recommended alert rule:** `gpu_utilization < 10% for 5 minutes` on one of the two nodes (via DCGM Exporter)
-- **Mechanism:** Alertmanager fires a webhook to the Orchestrator's `/alerts` endpoint. The Orchestrator selects the idle node, signals it to unsubscribe from NATS, then destroys the VM via the Linode API.
-
-**Why GPU idle for scale-down:** An empty queue does not mean the GPU is idle. In a fire-and-forget model, the AI Processor may still be running a long job after the message has been acked and the queue is empty. Only GPU utilization (reported by DCGM Exporter) reflects whether the hardware is actually doing work.
-
-### 4.4 Scale 1→0 (Scale to Zero)
-
-- **Trigger:** The last node has been idle for a sustained period
-- **Signal:** GPU utilization at or near zero for a longer sustained period
-- **Owner:** Grafana/Alertmanager → Orchestrator
-- **Recommended alert rule:** `gpu_utilization < 5% for 10 minutes` (via DCGM Exporter)
-- **Mechanism:** Same as 2→1, but with a longer evaluation window and a stricter threshold. Scaling to zero is the most expensive transition to reverse (full cold start), so the system should be conservative before terminating the last node.
-
-### 4.5 Scaling Summary
-
-| Transition | Signal | Owner | Latency Tolerance |
-|---|---|---|---|
-| 0→1 | Queue depth > 0 | Orchestrator (direct) | Cold start (2–5m) |
-| 1→2 | Queue depth > N for M min | Orchestrator (direct) | Moderate (2–5m) |
-| 2→1 | GPU idle < 10% for 5 min | Grafana → Orchestrator | Not time-sensitive |
-| 1→0 | GPU idle < 5% for 10 min | Grafana → Orchestrator | Not time-sensitive |
-
-**Scale-up** = queue depth (Orchestrator owns, no Grafana dependency)
-**Scale-down** = GPU idle (Grafana/Alertmanager owns, webhook to Orchestrator)
-
-### 4.6 Safety Mechanisms
-
-**State machine prevents race conditions.** The Orchestrator tracks each node through a strict lifecycle:
-
-```
-IDLE (0 nodes) → SCALING_UP → PROVISIONING → READY → DRAINING → SCALING_DOWN → IDLE
+  all scale operations require cooldown elapsed (COOLDOWN_DURATION)
 ```
 
-Duplicate alerts or threshold breaches that arrive while a transition is already in progress are ignored.
+### 4.2 Scale-Up Paths
 
-**Cooldown period.** A minimum of 5 minutes is enforced between any two scale events to prevent flapping (rapid scale-up/down cycles).
+**0 -> 1 (cold start)**
 
-**Scale-down lock.** The workload can signal "don't kill me" during a long-running job (e.g., a training batch). The Orchestrator respects this flag and delays the drain until the lock is released.
+- Trigger: `pending_work > 0` with `active_nodes == 0`
+- Action: create one GPU node via Linode API
+- Expected behavior: queued jobs remain buffered in JetStream until worker is ready
 
-**Max node cap.** A hard limit of 2 nodes is enforced in the Orchestrator regardless of queue depth.
+**N -> N+1 (horizontal scale-out)**
+
+- Trigger: `pending_work > SCALE_UP_THRESHOLD` continuously for `SCALE_UP_DURATION`
+- Guards: no scale operation in progress, cooldown elapsed, all active nodes already ready, and below `MAX_NODES`
+- Action: create one additional GPU node
+
+### 4.3 Scale-Down Paths
+
+Scale-down uses request-idle windows (queue-derived), not GPU utilization alerts.
+
+**N -> N-1 (when active nodes > 1)**
+
+- Trigger: `pending_work == 0` for at least `SCALE_DOWN_IDLE_DURATION`
+- Guards: cooldown elapsed, scale not already in progress, above `MIN_NODES`
+- Target selection: highest Linode ID among ready nodes (newest-first heuristic)
+
+**1 -> 0 (scale to zero)**
+
+- Trigger: `pending_work == 0` for at least `SCALE_TO_ZERO_IDLE_DURATION`
+- Guards: same as above
+- Action: destroy the last ready node
+
+### 4.4 Scaling Variables
+
+Primary scaling env vars:
+
+- `MIN_NODES` (default `0`)
+- `MAX_NODES` (default `2`)
+- `SCALE_UP_THRESHOLD` (default `10`)
+- `SCALE_UP_DURATION` (default `5m`)
+- `SCALE_DOWN_IDLE_DURATION` (default `5m`)
+- `SCALE_TO_ZERO_IDLE_DURATION` (default `10m`)
+- `COOLDOWN_DURATION` (default `5m`)
+- `MONITOR_INTERVAL` (default `10s`)
+
+Queue/consumer variables used by scaling:
+
+- `NATS_STREAM`
+- `NATS_SUBJECT`
+- `NATS_CONSUMER`
+- `ACK_WAIT`
+- `MAX_DELIVER`
+
+### 4.5 Safety Mechanisms
+
+- **Cooldown gate:** each scale event is blocked until `COOLDOWN_DURATION` passes.
+- **In-progress guard:** only one scale operation runs at a time.
+- **Node floor/cap:** scaling never goes below `MIN_NODES` or above `MAX_NODES`.
+- **Readiness guard for scale-out:** N->N+1 is allowed only when current active nodes are ready.
+- **Idle timer reset:** any `pending_work > 0` resets scale-down idle tracking.
 
 ---
 
 ## 5. Infrastructure Layout
 
-All control plane services run on a single small always-on Linode instance (non-GPU, shared/Nanode tier). This is the only persistent infrastructure cost. GPU nodes are fully ephemeral.
+Control-plane services run continuously on a non-GPU host. GPU worker nodes are ephemeral and created/destroyed by the orchestrator.
 
 ```
-Always-on Linode (Shared / Nanode):
-├── docker-compose.yml
-│   ├── gateway           (custom Go image)
-│   ├── nats              (nats:latest, JetStream enabled)
-│   ├── orchestrator      (custom Go image)
-│   ├── prometheus        (prom/prometheus)
-│   ├── alertmanager      (prom/alertmanager)
-│   └── grafana           (grafana/grafana)
+Control Plane Stack:
+├── api               (custom Go image)
+├── nats              (nats:latest, JetStream enabled)
+├── orchestrator      (custom Go image)
+├── nats-exporter     (natsio/prometheus-nats-exporter)
+├── prometheus        (prom/prometheus)
+└── grafana           (grafana/grafana)
 
-Ephemeral Linode GPU VMs (0–2):
-└── Provisioned from golden image snapshot
-    ├── OS + NVIDIA drivers + CUDA (baked into snapshot)
-    ├── Docker + NVIDIA Container Toolkit (baked into snapshot)
-    └── docker-compose.yml
-        ├── nats-agent        (custom Go image — queue bridge)
-        ├── ai-processor      (custom image — GPU workload)
-        ├── dcgm-exporter     (nvidia/dcgm-exporter — GPU metrics)
-        └── node-exporter     (prom/node-exporter — system metrics)
+GPU Node Stack (ephemeral, 0..MAX_NODES):
+└── Provisioned from Linode golden image
+    ├── host baseline (OS + NVIDIA drivers + CUDA + Docker + NVIDIA toolkit)
+    └── compose services
+        ├── nats-agent        (custom Go image)
+        ├── ai-processor      (custom image)
+        ├── node-exporter     (prom/node-exporter)
+        └── dcgm-exporter     (nvidia/dcgm-exporter, integration stack)
 ```
+
+Deployment references:
+
+- Local: `deploy/local/control-plane.compose.yml`, `deploy/local/gpu-node.compose.yml`
+- Integration: `deploy/integration/control-plane.compose.yml`, `deploy/integration/gpu-node.compose.yml`
 
 ---
 
 ## 6. Data Flow Summary
 
 **Happy path (nodes running):**
-1. Client sends request to Gateway
-2. Gateway validates and publishes to NATS
-3. Gateway returns HTTP 202
-4. GPU Node's NATS Agent pulls message from queue group
-5. Agent forwards payload to AI Processor container
-6. Agent acks the NATS message
-7. AI Processor executes the workload (fire-and-forget)
+1. Client sends `POST /v1/jobs` to `api`
+2. `api` validates payload and publishes to JetStream subject (`NATS_SUBJECT`)
+3. `api` returns HTTP `202` with `jobId`
+4. `nats-agent` fetches one message from the durable consumer
+5. Agent forwards payload to `ai-processor` (`POST /process`)
+6. While processing, agent sends `InProgress()` heartbeats
+7. On success (`2xx`), agent acks the message
+8. `ai-processor` returns completion response to the agent
 
 **Cold start path (no nodes):**
-1. Client sends request to Gateway
-2. Gateway publishes to NATS, returns HTTP 202
-3. Orchestrator detects pending messages in NATS with no active nodes
-4. Orchestrator provisions GPU VM from golden image via Linode API
-5. VM boots, NATS Agent subscribes to queue group
-6. Agent pulls buffered message, forwards to AI Processor
-7. AI Processor executes the workload (fire-and-forget)
+1. Client submits job to `api`; job is persisted in JetStream
+2. Orchestrator sees `pending_work > 0` with zero active nodes
+3. Orchestrator provisions a GPU VM from the golden image
+4. VM boots and starts `nats-agent` + `ai-processor`
+5. Agent binds to the durable consumer and begins pull-fetching
+6. Buffered job is processed and acknowledged
+
+**Failure path (current behavior):**
+
+1. If forwarding fails, agent retries locally (`MAX_DELIVER`, `RETRY_DELAY`)
+2. If retries are exhausted or failure is non-retryable (`4xx`), agent publishes a DLQ envelope
+3. Agent acks the original message after DLQ publish
 
 ---
 
 ## 7. Open Considerations
 
-**Cold start tolerance.** If 2–5 minute cold starts are unacceptable, evaluate keeping one stopped GPU instance as a warm standby. Check Linode's billing policy for stopped GPU VMs — some providers charge for reserved GPU even when stopped.
+**Cold start latency.** 0->1 scale events include VM provisioning and container startup time. If this is too high for your SLO, consider warm capacity (`MIN_NODES=1`) or a pre-warmed standby strategy.
 
-**Golden image maintenance.** The snapshot requires a versioning and rebuild pipeline. Driver updates, security patches, and application updates all require a new snapshot. Automate with Packer or equivalent tooling.
+**Scale-down safety.** Current scale-down is queue-idle based and infra-led. If stronger guarantees are required, add explicit worker drain coordination before node termination.
 
-**Observability for the control plane.** The always-on Linode is a single point of failure. Consider adding basic alerting (e.g., Uptime Kuma or an external ping service) to detect if the control plane itself goes down.
+**DLQ operations.** DLQ writing exists, but replay/triage workflow is still an operational concern (tooling, dashboards, and runbooks).
+
+**Golden image lifecycle.** Host dependencies in the snapshot still need periodic rebuilds for driver and security updates.
+
+**Control-plane resiliency.** A single control-plane host remains a failure domain; consider backup/HA strategy and external uptime monitoring.

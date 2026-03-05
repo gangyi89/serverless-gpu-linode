@@ -44,9 +44,8 @@ type jobMessage struct {
 }
 
 type createJobResponse struct {
-	JobID    string `json:"jobId"`
-	Status   string `json:"status"`
-	Sequence uint64 `json:"sequence"`
+	JobID  string `json:"jobId"`
+	Status string `json:"status"`
 }
 
 func main() {
@@ -194,9 +193,8 @@ func (a *API) handleCreateJob(w http.ResponseWriter, r *http.Request) {
 		"sequence", ack.Sequence,
 	)
 	writeJSON(w, http.StatusAccepted, createJobResponse{
-		JobID:    jobID,
-		Status:   "queued",
-		Sequence: ack.Sequence,
+		JobID:  jobID,
+		Status: "queued",
 	})
 }
 
@@ -351,8 +349,7 @@ const openAPISpec = `{
         "type": "object",
         "properties": {
           "jobId": { "type": "string" },
-          "status": { "type": "string", "example": "queued" },
-          "sequence": { "type": "integer", "format": "int64" }
+          "status": { "type": "string", "example": "queued" }
         }
       }
     }
